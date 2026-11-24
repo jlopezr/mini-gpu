@@ -7,7 +7,7 @@ depende de la columna: cada fila lee una sola fila de textura y solo `u` avanza.
 
 ```text
 python t.tests/cases-cpu-gpu/race/plane/plane_tex.py -o _build/c/plane_tex.bin
-mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build/c/plane_tex.bin
+mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c -p 36 --data plane_tex=_build/c/plane_tex.bin
                                                                   # -> _build/c/plane_board.bin
 ```
 

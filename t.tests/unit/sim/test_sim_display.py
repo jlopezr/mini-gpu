@@ -36,6 +36,9 @@ class FakeProcess:
 
 def display_with_machine(machine=None):
     display = SimDisplay(FONT, refresh_hz=1_000_000)       # sin esperas entre frames
+    # `time.monotonic` en Windows avanza a saltos de ~15 ms: dos `poll` seguidos ven
+    # el mismo instante y 1e-6 s de periodo no basta para no saltarse el segundo.
+    display.period = 0.0
     device = InputDevice()
     device.attach_host(display, every=1)
     machine = machine or minicpu_sim.CPU(1 << 21, video=VideoDevice(), input_device=device)

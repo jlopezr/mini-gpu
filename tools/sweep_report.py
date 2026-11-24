@@ -1,6 +1,6 @@
 """Retain seeded routing reports from a verified archived build.
 
-Genérico: no depende de qué prototipo es. --report-dir es opcional: si se
+Genérico: no depende de qué prototipo es. --build-dir es opcional: si se
 omite, usa el último build archivado de --prototype con summary.json.
 
 La pregunta que contesta
@@ -60,7 +60,7 @@ def latest_report_dir(prototype_dir: Path) -> Path:
         reverse=True,
     ) if history.exists() else []
     if not candidates:
-        raise SystemExit(f'No hay ningún build archivado en {history}. Ejecuta build primero, o indica --report-dir.')
+        raise SystemExit(f'No hay ningún build archivado en {history}. Ejecuta build primero, o indica --build-dir.')
     return candidates[0]
 
 
@@ -505,7 +505,7 @@ def show_sweep(folder: Path, color: bool = None) -> list:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-p', '--prototype')
-    parser.add_argument('--report-dir', type=Path, default=None)
+    parser.add_argument('--build-dir', type=Path, default=None)
     parser.add_argument('--live', action='store_true',
                         help='barre la síntesis de un build EN CURSO (la de _build/default), sin '
                              'esperar a que termine su rutado: sirve para lanzar las demás '
@@ -513,9 +513,9 @@ def main():
                              'han cambiado desde que arrancó')
     parser.add_argument('--seeds', type=int, nargs='+', default=None,
                         help='semillas a barrer (por defecto 1 2 3 4 5)')
-    parser.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 3) // 3),
-                        help='semillas en paralelo (por defecto un tercio de los hilos: nextpnr '
-                             'es monohilo y usa unos 500 MB). No cambia ningun resultado')
+    parser.add_argument('-j', '--jobs', type=int, default=0, metavar='N',
+                        help='semillas en paralelo (0 = automático: un tercio de los hilos, '
+                             'porque nextpnr es monohilo y usa unos 500 MB). No cambia ningun resultado')
     parser.add_argument('--nextpnr-options', nargs='+', default=[], metavar='OPCION',
                         help='opciones extra de nextpnr, SIN guiones y con = para el valor: '
                              'tmg-ripup placer-heap-timingweight=30 router=router1. Para '
@@ -600,8 +600,8 @@ def main():
     except PrototypeResolutionError as exc:
         raise SystemExit(f'error: {exc}')
     print(f'Using prototype: {prototype_dir.name}')
-    if args.live and args.report_dir is not None:
-        parser.error('--live y --report-dir se excluyen: --live toma el build en curso')
+    if args.live and args.build_dir is not None:
+        parser.error('--live y --build-dir se excluyen: --live toma el build en curso')
     live_files = None
     if args.live:
         source = live_report_dir(prototype_dir).resolve()
@@ -609,7 +609,7 @@ def main():
         print(f'Build en curso: {source.name}. Se barre su síntesis ({live_files[0]}).',
               flush=True)
     else:
-        source = (args.report_dir if args.report_dir is not None else latest_report_dir(prototype_dir)).resolve()
+        source = (args.build_dir if args.build_dir is not None else latest_report_dir(prototype_dir)).resolve()
         metadata = json.loads((source / 'metadata.json').read_text())
         if metadata.get('exit_code') != 0 or metadata.get('archive_only') or metadata.get('sources_changed_during_build'):
             raise SystemExit('Require a successful, unchanged, non-archive-only build.')
@@ -683,7 +683,8 @@ def main():
 
         # nextpnr es monohilo y con la misma semilla es determinista: correr
         # varias a la vez no cambia ningun resultado, solo el tiempo de pared.
-        jobs = max(1, min(args.jobs, len(args.seeds)))
+        requested = args.jobs if args.jobs > 0 else max(1, (os.cpu_count() or 3) // 3)
+        jobs = max(1, min(requested, len(args.seeds)))
         with ThreadPoolExecutor(max_workers=jobs) as pool:
             pending = [pool.submit(route, seed) for seed in args.seeds]
             for future in as_completed(pending):

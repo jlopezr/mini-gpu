@@ -180,8 +180,9 @@ class ObservacionesTest(unittest.TestCase):
 class VersionesTest(unittest.TestCase):
     def test_solo_las_carpetas_con_cpu_y_gpu(self):
         carpetas = {v["monitor_path"].parent.name for v in fpga_sys.VERSIONS.values()}
-        self.assertEqual(carpetas, {"36.fpga-cpu-gpu", "37.fpga-cpu-gpu-mk2"})
-        self.assertEqual(set(fpga_sys.VERSIONS), {"cpugpu", "mk2"})
+        self.assertEqual(carpetas, {"36.fpga-cpu-gpu", "37.fpga-cpu-gpu-mk2",
+                                    "44.fpga-cpu-gpu-pipelined-rop-audio"})
+        self.assertEqual(set(fpga_sys.VERSIONS), {"cpugpu", "mk2", "pipelined"})
 
     def test_la_36_y_la_37_siguen_siendo_cpu_para_cpu_fpga(self):
         """`fpga-sys` es ADEMAS: no las saca de `fpga-cpu` ni de `fpga-gpu`."""

@@ -7,6 +7,7 @@ su bitstream y corre cada caso comparando con lo esperado, y junta el resultado
 en una tabla: una fila por caso, una columna por prototipo, con PASS, FAIL o el
 motivo del SKIP. Es el equivalente de conformidad de `bench-all` (que mide).
 
+  test-all --yes                       CPU y GPU (por defecto)
   test-all --family gpu --yes          las GPU: 12, 14, 22, 29, y la de la 36 y la 37
   test-all --family cpu --yes          las CPU
   test-all -p 22 -p 29 --yes           solo esos
@@ -33,17 +34,41 @@ for extra in (ROOT, ROOT / "t.tests"):
         sys.path.insert(0, str(extra))
 
 from tools.bench_all import board_backend, prototypes  # noqa: E402
+from tools.cli_common import add_family, add_output, add_toolchain, add_yes, prototype_number  # noqa: E402
 
 RESULT = re.compile(r"^(PASS|FAIL) (\S+) \[[^\]]+\]")
 SKIP = re.compile(r"^SKIP ([^\s:\[]+)(?: \[[^\]]+\])?:? ?(.*)$")
 SUMMARY = re.compile(r"(\d+) caso\(s\), (\d+) fallo\(s\), (\d+) omitido")
 
 
-def run_prototype(family: str, number: int, assume_yes: bool, extra: list[str]):
+def program_toolchain(number: int, toolchain: str, assume_yes: bool) -> str | None:
+    """Programa en la placa el último build archivado de `toolchain` de este prototipo.
+
+    Devuelve None si salió bien, o el motivo. Es lo mismo que `test-board -t`: luego se prueba
+    con `--no-upload`, así que `run_tests` no sube ningún otro bitstream."""
+    from backends import board
+    from tools import run_board
+    try:
+        target = run_board.resolve_target(str(number))
+        source = run_board.archived_source(target, None, toolchain)
+        policy = board.UploadPolicy(allowed=True, assume_yes=assume_yes)
+        code = run_board.upload_archived(target, run_board.detect_port(), 1.0, source, policy)
+    except SystemExit as exc:
+        return str(exc)
+    return None if code == 0 else f"no se pudo programar el build {toolchain} (código {code})"
+
+
+def run_prototype(family: str, number: int, assume_yes: bool, extra: list[str],
+                  toolchain: str | None = None):
     """`(resultados, resumen, salida)`; `resultados[caso] = (estado, detalle)`."""
     command = [sys.executable, str(ROOT / "t.tests" / "run_tests.py"),
                "--backend", board_backend(family, number), "-p", str(number)]
-    if assume_yes:
+    if toolchain:
+        problem = program_toolchain(number, toolchain, assume_yes)
+        if problem:
+            return {}, None, problem, 1
+        command.append("--no-upload")
+    elif assume_yes:
         command.append("-y")
     command += extra
     print(f"$ {' '.join(command)}", flush=True)
@@ -122,12 +147,14 @@ def build_report(family: str, columns, totals) -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--family", choices=("cpu", "gpu"), default="gpu")
-    parser.add_argument("-p", "--prototype", action="append", type=int, metavar="N")
-    parser.add_argument("-y", "--yes", action="store_true",
-                        help="aceptar la carga de bitstreams sin preguntar")
+    add_family(parser)
+    parser.add_argument("-p", "--prototype", action="append", type=prototype_number, metavar="PROTOTIPO",
+                        help="solo este prototipo (número o carpeta; se puede repetir)")
+    add_yes(parser, "aceptar la carga de bitstreams sin preguntar")
+    add_toolchain(parser, help="en cada prototipo, programa el último build archivado de esa herramienta "
+                               "(fuentes actuales) y prueba contra él, sin recompilar")
     parser.add_argument("--list", action="store_true")
-    parser.add_argument("-o", "--output", type=Path)
+    add_output(parser, help="fichero Markdown de la matriz")
     parser.add_argument("cases", nargs="*", help="casos o directorios (por defecto, todos)")
     args = parser.parse_args(argv)
 
@@ -145,7 +172,7 @@ def main(argv=None) -> int:
     # Secuencial a proposito: hay UNA placa, y cada prototipo le carga su bitstream.
     for family, number, name in chosen:
         started = time.monotonic()
-        results, summary, output, code = run_prototype(family, number, args.yes, args.cases)
+        results, summary, output, code = run_prototype(family, number, args.yes, args.cases, args.toolchain)
         error = None
         fails = sum(1 for s, _d in results.values() if s == "FAIL")
         if not results:
@@ -163,7 +190,9 @@ def main(argv=None) -> int:
         failed = failed or bool(error) or fails > 0
         print(f"--- {name}: " + (error or f"{len(results)} casos, {fails} fallos")
               + f" en {time.monotonic() - started:.0f} s", flush=True)
-        columns.append((f"{number}", results, error))
+        # Con `--family all` la 36 y la 37 salen dos veces (CPU y GPU): el título las distingue.
+        title = f"{number} {family.upper()}" if args.family == "all" else f"{number}"
+        columns.append((title, results, error))
         totals.append(summary.groups() if summary else None)
 
     report = build_report(args.family, columns, totals)

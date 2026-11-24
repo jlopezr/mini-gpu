@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 if str(ROOT / "t.tests") not in sys.path:
     sys.path.insert(0, str(ROOT / "t.tests"))
 
+from tools.cli_common import DEFAULT_SERIAL_TIMEOUT  # noqa: E402
 from tools.debug_target import (  # noqa: E402
     CAPS_FREE_RUN, CAPS_RESET, CAPS_WRITE_MEMORY,
     DebugTarget, TargetError, TargetState, VideoLayout,
@@ -169,7 +170,7 @@ class BoardTarget(DebugTarget):
 
 
 def connect(prototype: str, port: str | None = None,
-            serial_timeout: float = 2.0) -> tuple[BoardTarget, object]:
+            serial_timeout: float = DEFAULT_SERIAL_TIMEOUT) -> tuple[BoardTarget, object]:
     """Abre el puerto y devuelve el objetivo y la conexión (para cerrarla)."""
     from backends import board
     from tools.prototype import PrototypeResolutionError

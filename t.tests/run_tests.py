@@ -33,6 +33,7 @@ REPOSITORY = ROOT.parent
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
+from tools.cli_common import add_serial_timeout  # noqa: E402
 from tools.measure_archive import archive_measurement  # noqa: E402
 from tools.perf_counters import breakdown as perf_breakdown  # noqa: E402
 from tools.perf_counters import (  # noqa: E402
@@ -1750,7 +1751,8 @@ def main() -> int:
         help="omite un test.json o todos los casos bajo una carpeta; puede repetirse",
     )
     parser.add_argument("--skip-slow", action="store_true",
-                        help="omite casos cuyo test.json declare slow con un motivo")
+                        help="omite casos cuyo test.json declare slow con un motivo. Es el inverso de "
+                             "`--full` en `test`/`test-timings`: aquí lo lento corre por defecto")
     parser.add_argument(
         "--backend",
         choices=(
@@ -1762,7 +1764,7 @@ def main() -> int:
     )
     parser.add_argument("--port", default=None,
                         help="por defecto, detecta el primer adaptador FTDI conectado")
-    parser.add_argument("--serial-timeout", type=float, default=1.0)
+    add_serial_timeout(parser)
     parser.add_argument(
         "--version",
         action="append",
@@ -1807,10 +1809,10 @@ def main() -> int:
                         metavar="N",
                         help="lista las N ejecuciones más lentas al terminar "
                              "(10 si se omite el valor)")
-    parser.add_argument("--timings-json", type=Path, metavar="FICHERO",
+    parser.add_argument("--output-timings-json", type=Path, metavar="FICHERO",
                         help="escribe tiempos de pared por caso y el total en JSON "
                              "(para herramientas; no cambia las comprobaciones)")
-    parser.add_argument("--results-json", type=Path, metavar="FICHERO",
+    parser.add_argument("--output-results-json", type=Path, metavar="FICHERO",
                         help="escribe el resultado de cada caso (PASS/FAIL, errores y el "
                              "hash de su carpeta) en JSON; lo usa `test-board` para el "
                              "registro de pruebas en placa")
@@ -2109,7 +2111,7 @@ def main() -> int:
                 "case_sha256": folder_sha256(Path(path).parent),
             })
 
-    if args.results_json is not None:
+    if args.output_results_json is not None:
         payload = {
             "backend": args.backend,
             "failures": failures,
@@ -2117,8 +2119,8 @@ def main() -> int:
             "unprepared": unprepared,
             "results": case_results,
         }
-        args.results_json.parent.mkdir(parents=True, exist_ok=True)
-        args.results_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        args.output_results_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_results_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     if args.durations and durations:
         print(f"\n{min(args.durations, len(durations))} ejecución(es) más lentas:")
@@ -2126,7 +2128,7 @@ def main() -> int:
             print(f"  {elapsed:7.2f}s  {name} [{backend_name}]")
 
     total = time.monotonic() - started
-    if args.timings_json is not None:
+    if args.output_timings_json is not None:
         payload = {
             "backend": args.backend,
             "total_seconds": total,
@@ -2138,8 +2140,8 @@ def main() -> int:
                 for elapsed, name, backend_name in sorted(durations, reverse=True)
             ],
         }
-        args.timings_json.parent.mkdir(parents=True, exist_ok=True)
-        args.timings_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        args.output_timings_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_timings_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"{len(cases) + unprepared} caso(s), {failures} fallo(s), "
           f"{skipped} omitido(s) por arquitectura, capacidades o selección, {total:.1f}s")
     return 1 if failures else 0

@@ -10,6 +10,13 @@ Para los detalles de uso y los ejemplos, el manual sigue siendo
 [tools/README.md](../tools/README.md). Este documento es un mapa y un análisis, no
 lo sustituye.
 
+**Actualizado** tras añadir `--bitstream` y `--toolchain` a `test-board` y tras
+cambiar `_sources_changed` (commit `b196f98`); el resto del inventario es de la
+primera versión.
+
+**Aplicadas las propuestas 1 a 16 y la 16b** (secciones 5.1 y 5.2). Las secciones 3 y 4 describen el
+estado *anterior* a ese cambio; donde difiere, manda 5.1 y el código.
+
 **Cómo se ha hecho.** Los argumentos salen de leer el código (`argparse` y los
 lanzadores), no de ejecutar `--help`. Si algún valor por defecto ha cambiado en
 una versión posterior, manda el código. Las herramientas que viven fuera de
@@ -93,7 +100,7 @@ módulo: `asm-sizes`, `capture-frames`, `capture-frame-sim`, `check-vobj`,
 | Herramienta     | Qué hace                                                           | Argumentos                                                                                                                                                                                                                                                                       |
 |-----------------|--------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `mini-lcc`      | C a ensamblador MiniISA con `u.lcc`.                               | `source`, `-o`, `--keep-i`, `-I`, `-D`, `--no-crt`, `--fp32`, `--no-alias`, `--allocator`                                                                                                                                                                                        |
-| `mini-cc`       | C completo (varios `.c`) a imagen, opcionalmente cargada en placa. | `program`, `otro...`, `-o/--output`, `--outdir`, `-I`, `-D`, `--data ETIQUETA=FICHERO`, `--board`, `--load [PROTOTIPO]`, `--no-run`, `--fp32`, `--far-calls`, `--opt-stats`, y las de `mini-opt` (`--assume-noalias`, `--extern-refs`, `--whole-program`, `--passes`, `--stats`) |
+| `mini-cc`       | C completo (varios `.c`) a imagen, opcionalmente cargada en placa. | `program`, `otro...`, `-o/--output`, `--output-dir`, `-I`, `-D`, `--data ETIQUETA=FICHERO`, `-p`, `--load`, `--no-run`, `--fp32`, `--far-calls`, `--opt-stats`, y las de `mini-opt` (`--assume-noalias`, `--extern-refs`, `--whole-program`, `--passes`, `--stats`) |
 | `mini-opt`      | Optimizador del ensamblador.                                       | `-o/--output`, `--passes`, `--ssy-all`, `--assume-noalias`, `--extern-refs`, `--whole-program`, `--stats`, `--list-passes`                                                                                                                                                       |
 | `mini-asm`      | Ensamblador (`1.isa/asm2/mini-asm.py`).                            | `input`, `-o`, `--hex`, `--vobj`, `--json`, `-I/--include-dir`, `-D/--define`, `--listing [FICHERO]`                                                                                                                                                                             |
 | `mini-dis`      | Desensamblador.                                                    | `input`, `-f/--format`, `--start-pc`, `--no-addresses`, `--no-words`                                                                                                                                                                                                             |
@@ -144,7 +151,7 @@ generadores sin lanzador: `make_rtl_fixtures.py`, `gen_input_vectors.py`,
 
 | Herramienta    | Qué hace                                                            | Argumentos                                                                                                                                                                                                                                               |
 |----------------|---------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run-tests`    | `t.tests/run_tests.py` contra simuladores.                          | `--quick`, `--verbose`, `--hardware`, `--`; el resto se reenvía. Sin `argparse`: recorre `argv` a mano.                                                                                                                                                  |
+| `run-tests`    | `t.tests/run_tests.py` contra simuladores.                          | `--quick`, `--verbose`, `--hardware`, `--`; el resto se reenvía. *(Ahora con `argparse`, propuesta 19.)*                                                                                                                                                  |
 | `test-board`   | La misma suite contra la placa, infiriendo `--backend`/`--version`. | `-p` (obligatorio), `--port`, `--family cpu\|gpu\|all` (por defecto `all`), `--no-record`, `--bitstream RUTA` o `--toolchain apio\|diamond` (excluyentes: programan ese build archivado y prueban con `--no-upload`); el resto va a `run_tests.py`.                                                                                                                                 |
 | `test-all`     | `test-board` sobre varios prototipos.                               | `--family cpu\|gpu` (por defecto `gpu`), `-p N` (repetible, entero), `-y`, `--list`, `-o`, `cases...`                                                                                                                                                    |
 | `test-timings` | Cronometra la suite entera.                                         | `--prototype` (repetible, sin `-p`), `--cpu-prototype`, `--gpu-prototype`, `--skip-hardware`, `--cases`, `--jobs` (1), `--full`, `--full-x-tests`, `--skip-python`, `--skip-rtl`, `--skip-x-tests`, `--quiet`, `--verbose`, `--output`, `--json FICHERO` |
@@ -161,6 +168,24 @@ Opciones propias de `t.tests/run_tests.py` (a las que llegan los reenvíos):
 `board-info`, `board-upload`, `board-load` y `test-board` son cuatro puntos de
 entrada de `tools/run_board.py` (`main_info`, `main_upload`, `main_load`,
 `main_test`). `run-board` es el `main` clásico, que hace todo a la vez.
+
+**Qué bitstream hay en la placa.** `board-upload` y `test-board` pueden programar
+un build archivado de `reports/` (apio o Diamond) en vez del de `_build/default`:
+
+| Orden | Qué programa |
+|---|---|
+| `board-upload -p N --bitstream RUTA` | El `hardware.bit` de esa ruta o carpeta. No sella la subida. |
+| `test-board -p N --bitstream RUTA` | Lo mismo, y después lanza la suite con `--no-upload` (retira `-y`). |
+| `test-board -p N --toolchain apio\|diamond` | El build más nuevo de esa herramienta con `hardware.bit`, `exit_code` 0 y fuentes iguales a las actuales (`board_record.find_latest_build`). Si no hay ninguno, falla y dice por qué sin tocar la placa. |
+| `test-board -p N` (sin ninguna) | Lo que haya en la placa; con `-y`, si cree que está desfasado, sube el de apio de `_build/default` y recompila si hace falta. |
+
+Una prueba con `--bitstream`/`--toolchain` deja su `board-tests.json` en la carpeta
+de ese build, porque el registro se asocia por el hash del `.bit` (es lo que rellena
+la columna BOARD de `build-list --prototypes`). Para decidir si el RTL «ha cambiado»,
+`run_tests` ya no mira solo el bitstream de apio: si lo último que se programó es un
+build archivado de este prototipo con las fuentes actuales, lo da por bueno
+(`_sources_changed` en `t.tests/backends/board.py`). La comparación ignora
+`diamond-constraints.txt`: un cambio solo de restricciones no invalida un build.
 
 | Herramienta | Argumentos |
 |---|---|
@@ -249,6 +274,7 @@ ejemplo concreto.
 | Paralelismo | `--jobs`: por defecto `None` (`build_runner`), `0` (`run_tests`), `1` (`test-timings`); y `-j` solo en `run_tests`. |
 | Espera serie | `--serial-timeout`: 1.0 en `board-*`, `test-board`, `run_tests`; 2.0 en `mini-dbg` y `phase-sweep`. |
 | Etiqueta | `--label`: por defecto `build`, `test`, `sweep`, `bench`, `medida` (`--measure-label` en `run_tests`). |
+| Elegir el bitstream | `--bitstream RUTA` en `board-upload` y `test-board`; `--bitstream [NOMBRE=]RUTA` repetible y obligatorio en `phase-sweep`; `--toolchain apio\|diamond` solo en `test-board`; `board-upload`, `run-board` y `test-all` no la tienen. *(Resuelto con la 16b: ahora `-b/--bitstream` y `-t/--toolchain` en todas.)* |
 
 **Alias dentro de una misma herramienta.** `sim-gpu-cycle` acepta
 `--num-warps`/`--warps` y `--warp-size`/`--lanes`; `sim-gpu-cycle` también tiene
@@ -275,9 +301,13 @@ tiene por defecto `"36"`. El resto de herramientas de placa usa `-p`.
 
 1. **Tres formas de reenviar argumentos.** `build_runner` y `run_board` usan
    `argparse` con subcomandos; `test-board` y `test-all` usan
-   `parse_known_args` y reenvían el resto; `run-tests` recorre `argv` a mano, con
-   `--` como separador. No hay una regla común sobre cómo pasar opciones a
-   `run_tests.py`.
+   `parse_known_args` y reenvían el resto; `run-tests` también (antes recorría
+   `argv` a mano, propuesta 19), y además acepta `--` como separador. Los tres
+   reenvían a `run_tests.py` lo que no reconocen. Además, `test-board` ya no es un reenvío puro: con
+   `--bitstream`/`--toolchain` lee `-y` de lo reenviado, lo retira y añade
+   `--no-upload` (porque `run_tests` no admite `-y` y `--no-upload` a la vez).
+   Es una regla implícita que no se ve en la línea de órdenes.
+   `--bitstream`/`--toolchain` tampoco existen en `run-board` ni en `test-all`.
 2. **Los lanzadores que necesitan `pyserial` se «re-ejecutan bajo el venv» de
    formas distintas.** `board-*`, `bench-all`, `font-patch` y `test-board`
    re-ejecutan Python; `run-board`, `build` y `test` (bash) eligen el intérprete
@@ -329,27 +359,28 @@ esfuerzo (S/M/L) y riesgo.
 
 | # | Propuesta | Esfuerzo |
 |---|---|---|
-| 1 | Añadir a `tools/README.md` las nueve herramientas que no figuran (ver 4.3.9) y enlazar este documento desde su cabecera. | S |
-| 2 | Quitar los alias: `--warps`, `--lanes` y `--dump-memory` en `sim-gpu-cycle`, y `--slow` en `test`. Elegir `--num-warps`, `--warp-size`, `--dump`, `--full`. | S |
-| 3 | Dar `-y` a `build-clean` y a `phase-sweep`, y `-p` a `test-timings`. | S |
-| 4 | Corregir el valor por defecto `"17"` de `build run -p` (pedir `-p` explícito, como en `test`). | S |
-| 5 | Dar a `setup` un `.ps1` y a `build-diamond`, `build-vlink` y `module-diagram` un lanzador bash o una nota explícita de «solo Windows/Linux». | S |
-| 6 | Hacer que `test-timings` use el mismo molde de lanzador que los demás (`sys.path` + `from tools.test_timings import main`). | S |
-| 7 | Unificar `--serial-timeout` en un solo valor por defecto (1.0 o 2.0) en un único sitio (`_add_common_args`) y reutilizarlo en `mini-dbg` y `phase-sweep`. | S |
+| 1 | **Hecho.** `tools/README.md` recoge ahora las nueve herramientas (sección «Otras herramientas») y enlaza este documento desde su cabecera y desde la sección de Windows. | S |
+| 2 | **Hecho.** Quitados `--warps`, `--lanes` y `--dump-memory` (`sim-gpu-cycle`) y `--slow` (`test`, en `build_runner.py` y `test_runner.py`). Quedan `--num-warps`, `--warp-size`, `--dump`, `--full`. Pendiente: `--config`/`--warp-config`, que sigue siendo un alias en `sim-gpu-cycle`. | S |
+| 3 | **Hecho.** `-y` en `build-clean` y `phase-sweep`; `-p` en `test-timings`. | S |
+| 4 | **Hecho.** `build run -p` es obligatorio; ya no hay valor por defecto `"17"`. | S |
+| 5 | **Hecho.** `setup.ps1` creado. `build-vlink` ya tenía `.ps1` (el inventario lo daba por solo bash). `build-diamond`, `module-diagram` y `get-documents` siguen siendo solo `.ps1` a propósito (Diamond y la ruta de `netlistsvg` son de Windows) y queda dicho en `tools/README.md`. | S |
+| 6 | **Hecho.** `test-timings` usa `sys.path` + `from tools.test_timings import main`; su `.ps1` sigue el molde común (llama al lanzador sin extensión). | S |
+| 7 | **Hecho, con 1,0 s.** Nuevo `tools/cli_common.py` con `DEFAULT_SERIAL_TIMEOUT` y `add_serial_timeout()`, usado por `run_board` (y con él `board-*`, `test-board`, `run-board`), `run_tests.py`, `mini-dbg`, `phase-sweep` y `debug_board.py`. Se eligió 1,0 (el de `board-*`, `test-board` y `run_tests`); `mini-dbg` y `phase-sweep` bajan desde 2,0, así que si alguna lectura larga de `phase-sweep` expira hay que subirlo con `--serial-timeout`. Es una constante. Es también el primer contenido de la propuesta 8. | S |
 
 ### 5.2 Unificación de parámetros
 
 | # | Propuesta | Esfuerzo |
 |---|---|---|
-| 8 | **Un módulo `tools/cli_common.py`** con funciones `add_prototype()`, `add_port()`, `add_serial_timeout()`, `add_yes()`, `add_output()`, `add_json()`, `add_verbosity()`. Cada herramienta las importa en vez de redeclararlas. Hoy hay `_add_common_args` en `run_board.py` y nada parecido en el resto. | M |
-| 9 | Fijar la convención: `-p/--prototype` siempre texto resuelto por `prototype.py`; `-y/--yes` en todo lo que pregunte; `-o/--output` siempre fichero y `--output-dir` siempre carpeta. | M |
-| 10 | Una sola política para JSON: `--json` booleano que escribe a stdout. Renombrar `test-timings --json FICHERO` a `--output-json` y `run_tests --results-json`/`--timings-json` a la misma familia; `trace --format json` pasa a `--json`. | M |
-| 11 | Pasar a inglés las opciones en español de las herramientas de vídeo: `--tamano`→`--size`, `--escala`→`--scale`, `--ajuste`→`--fit`, `--fondo`→`--background-color`, `--direccion`→`--address`, `--desde`→`--first-swap`, `--prefijo`→`--prefix`, `--instrucciones`→`--instructions`, `--max-instrucciones`→`--max-instructions`, `--tolerancia`→`--tolerance`, `--max-listados`→`--max-listed`, `--datos`→`--data`. Los posicionales `entrada`/`salida` pasan a `input`/`output`. (Alternativa si prefieren castellano: traducir al revés, pero hacerlo en todo el repo.) | M |
-| 12 | Un vocabulario para «lento»: `--full` para incluir lo lento, y quitar `--skip-slow` o dejarlo solo como inverso documentado. | S |
-| 13 | Un único valor por defecto de `--family` (propongo `all`) y que `test-all` lo declare igual que `bench-all` y `test-board`. | S |
-| 14 | `--jobs` con la misma semántica en todas partes (0 = automático) y `-j` como forma corta en todas. | S |
-| 15 | Unificar los simuladores: mismas banderas de `--run-limit`, `--memory-size`, `--num-warps`, `--warp-size`, `--dump`, `--trace*` con los mismos valores por defecto (8 y 8) en `sim-gpu`, `sim-sys`, `sim-gpu-cycle` y `mini-dbg`. | M |
-| 16 | Quitar el 36 cableado de `mini-cc`: `--board` y `--load` pasan a `-p/--prototype` + `--load`. | S |
+| 8 | **Hecho (parcial).** `tools/cli_common.py` tiene `add_prototype`, `add_port`, `add_serial_timeout`, `add_yes`, `add_output`, `add_output_dir`, `add_json`, `add_verbosity`, `add_jobs`, `add_family` y `prototype_number`. Lo usan `run_board`, `phase_sweep`, `prototype_report`, `font_patch`, `test_all`, `bench_all`, `debug_cli`, `debug_board` y `run_tests`. Quedan sin migrar los `argparse` de `build_runner`, `test_runner`, `test_timings`, `trace`, los lanzadores sin módulo y los simuladores (viven en carpetas de prototipo y declaran sus propias opciones). | M |
+| 9 | **Hecho (parcial).** `-p` pasa a texto resuelto por `prototype.py` en `bench-all` y `test-all` (`prototype_number`), y se añade `-p` a `build-diamond` y a `stage_programs`. `-y` en `phase-sweep` y `build-clean`. `--output-dir` solo donde es una salida: `--report-dir` de `build-sweep` era en realidad el build de origen y pasa a `--build-dir`; `--output` de `phase-sweep` era un prefijo y pasa a `--output-prefix`. `mini-cc --outdir` pasa a `--output-dir` en todos los usos, incluido `u.lcc/runtime/fuzz-softfloat.py` (submódulo: ese cambio hay que commitearlo dentro de `u.lcc`; además llamaba a `tools/build-c`, que ya no existe, y ahora llama a `mini-cc`). | M |
+| 10 | **Hecho.** `trace --format json` es ahora `--json` (también en los tests, el README y `minitour.md`); `test-timings --json FICHERO` es `--output-json`; `run_tests --results-json`/`--timings-json` son `--output-results-json`/`--output-timings-json`. Pendiente: `mini-asm --json FICHERO` (vive en `1.isa/asm2`). | M |
+| 11 | **Hecho.** Opciones y posicionales en inglés en `image-to-framebuffer`, `capture-frames`, `capture-frame-sim`, `frame-to-image.py`, `compare-frames.py` y `asm-sizes`: `--size`, `--scale`, `--fit` (valores `crop`/`fit`/`stretch`), `--background-color`, `--address`, `--first-swap`, `--prefix`, `--instructions`, `--tolerance`, `--max-listed`, `--data`, `input`/`output` y `expected`/`actual`. `--max-instrucciones` no pasa a `--max-instructions` sino a `--run-limit`, el nombre acordado en todo el repo para este límite. Pendiente: `--direcciones` de los `sdram_dq_matrix.py` de cada prototipo. | M |
+| 12 | **Hecho (por la vía corta).** `--full` incluye lo lento en `test` y `test-timings`. `--skip-slow` de `run_tests` se queda como el inverso documentado: allí lo lento corre por defecto, y invertirlo cambiaría qué corre `test-board`. La ayuda ya lo explica. | S |
+| 13 | **Hecho.** `--family` vale `all` por defecto en `test-all`, `test-board` y `bench-all`. Con `all`, la 36 y la 37 salen dos columnas en la matriz de `test-all` (CPU y GPU), tituladas `36 CPU` y `36 GPU`. | S |
+| 14 | **Hecho.** `-j/--jobs` con `0` = automático en `test`, `build-sweep`, `run-tests` y `test-timings`. Los valores por defecto no cambian: `test-timings` sigue en 1 a propósito (tiempos comparables), `test` en 2 (`AUTO_JOBS`) y `build-sweep` en un tercio de los hilos. | S |
+| 15 | **Hecho (lo que cambia el comportamiento sin riesgo).** `sim-sys` gana `--trace-detail`; las ayudas de `--num-warps`, `--warp-size` y `--run-limit` dicen el mismo valor por defecto en los cuatro. `--warp-size` queda en `None` en `sim-gpu` y `mini-dbg` porque es el centinela de «no lo pedí» (con `--config` hay que comprobar que no choque, y `mini-dbg` rechaza opciones de GPU sin `--gpu`): el efectivo es 8 en todos. | M |
+| 16 | **Hecho.** `mini-cc` no lleva el 36 cableado: `-p PROTOTIPO` compila para la placa de ese prototipo y `--load` (que exige `-p`) la sube. Desaparece `--board`. `tools/c-program.mk` pasa `-p $(PROTOTYPE)`. | S |
+| 16b | **Hecho.** `-t/--toolchain apio\|diamond` y `-b/--bitstream RUTA` (formas cortas nuevas) en `board-upload`, `run-board` y `test-board`; `-t` en `test-all` (por prototipo; `-b` no tiene sentido con varios prototipos) y `-b [NOMBRE=]RUTA` + `-t` repetibles en `phase-sweep` (con `-t` hace falta `-p`, y la etiqueta es el nombre de la herramienta). Todas usan `board_record.find_latest_build` vía `run_board.archived_source`, y las definiciones están en `cli_common.add_bitstream`/`add_toolchain`/`add_archived_build`. `-b` y `-t` son excluyentes y no se combinan con `--rebuild` ni `--no-upload`. | S |
 
 ### 5.3 Nombres de herramientas
 
@@ -381,7 +412,7 @@ en muchos documentos. Convendría hacerla con `generate-docs --check` y
 |---|---|---|
 | 17 | **Un único lanzador genérico.** Hoy hay unos 60 ficheros sin extensión y unos 60 `.ps1` casi idénticos. Un solo `tools/_launch.py` (que elija el intérprete, el venv y el módulo) más una tabla `tools/commands.toml` (nombre → módulo o script) permitiría generar los lanzadores o sustituirlos por un solo punto de entrada (`tools/mgpu <comando>`). Es lo que más reduce el volumen de ficheros. | L |
 | 18 | Si se prefiere no tocar los comandos, **generar** los lanzadores y los `.ps1` desde esa tabla con un comando `tools/gen-launchers` y comprobar en CI que están al día (igual que `generate-docs --check`). | M |
-| 19 | Sustituir el `argv` manual de `run-tests` por `argparse` con `parse_known_args`, igual que `test-board`. | S |
+| 19 | **Hecho.** `run-tests` usa `argparse` con `parse_known_args` (`allow_abbrev=False`, para que `--ver` no se convierta en `--verbose`). Reenvía a `run_tests.py` lo que no reconoce, en orden, y todo lo que sigue a `--`, sin interpretarlo; `-h` ya da la ayuda de `argparse`. Test nuevo: `t.tests/unit/tools/test_run_tests_launcher.py`. | S |
 | 20 | Hacer que todo lo que pueda durar más de unos minutos (`phase-sweep`, `bench-all`, `test-all`, `test-timings`) pueda correr con el mismo `--background` y el mismo `status/log/stop` que `build_runner`. | L |
 | 21 | Partir `build-sweep` en `build-sweep run` y `build-sweep show/list/compare/promote` (o sacarlos a `sweep-*`), y `timing-wall` en modos con subcomandos. | M |
 | 22 | Mover `mini_cc.py` y `mini_opt/` bajo una carpeta `tools/compiler/` junto a `mini-lcc`, y los `sim_*`, `debug_*`, `monitor_protocol` a `tools/sim/` y `tools/debug/`. Hoy `tools/` mezcla ~190 ficheros. | M |

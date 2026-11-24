@@ -111,8 +111,8 @@ def parse_arguments(argv: list[str] | None = None):
     parser.add_argument("--gpu-run-limit", type=_limit,
                         help="sustituye --run-limit solo para los warps (0 sin límite)")
     parser.add_argument("--memory-size", type=_hex, default=32 * 1024 * 1024)
-    parser.add_argument("--num-warps", type=int, default=8)
-    parser.add_argument("--warp-size", type=int, default=8)
+    parser.add_argument("--num-warps", type=int, default=8, help="warps (por defecto 8)")
+    parser.add_argument("--warp-size", type=int, default=8, help="lanes por warp (por defecto 8)")
     parser.add_argument("--cpu-steps", type=int, default=1,
                         help="instrucciones de CPU por ronda (1)")
     parser.add_argument("--gpu-steps", type=int, default=1,
@@ -120,6 +120,8 @@ def parse_arguments(argv: list[str] | None = None):
     parser.add_argument("--dump", nargs=3, metavar=("ADDRESS", "SIZE", "FILE"))
     parser.add_argument("--trace", action="store_true",
                         help="traza intercalada CPU/warp por instrucción, a stderr")
+    parser.add_argument("--trace-detail", action="store_true",
+                        help="incluye registros y memoria por hilo en las líneas de la GPU; implica --trace")
     parser.add_argument("--trace-limit", type=int,
                         help="máximo de líneas de traza, de CPU y de warp juntas; implica "
                              "--trace y no limita la ejecución")
@@ -154,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
         # `auto` usa Codon si está instalado (macOS y Linux) y, si no, Python sin
         # decir nada; si Codon está pero falla, avisa y sigue con Python. Con
         # `codon`, el fallo es un error. Traza y perfil son solo de Python.
-        tracing = args.trace or args.trace_file is not None or args.trace_limit is not None
+        tracing = (args.trace or args.trace_detail or args.trace_file is not None
+                   or args.trace_limit is not None)
         if tracing or args.profile is not None or args.profile_annotate is not None:
             if args.backend == "codon":
                 print("Codon: traza/profiling usan el motor Python de referencia",
@@ -176,14 +179,14 @@ def main(argv: list[str] | None = None) -> int:
         if profile is not None:
             system.enable_profile(profile, args.profile_after_swaps)
         sim_peripherals.start_display(system)
-        tracing = (args.trace or args.trace_file is not None
+        tracing = (args.trace or args.trace_detail or args.trace_file is not None
                    or args.trace_limit is not None)
         output = (args.trace_file.open("w", encoding="utf-8") if args.trace_file
                   else nullcontext(sys.stderr))
         limited = stalled = None
         with output as stream:
             if tracing:
-                system.enable_trace(stream, args.trace_limit)
+                system.enable_trace(stream, args.trace_limit, args.trace_detail)
             try:
                 if system.run(args.run_limit,
                               max_cpu_instructions=args.cpu_run_limit,

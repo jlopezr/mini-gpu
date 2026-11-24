@@ -127,7 +127,7 @@ exit 0
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--prototype", required=True, help="numero, nombre o ruta")
+    parser.add_argument("-p", "--prototype", required=True, help="numero, nombre o ruta")
     parser.add_argument("--synth", choices=("synplify", "lse"), default="synplify")
     parser.add_argument("--diamond", type=Path, default=DEFAULT_DIAMOND,
                         help="raiz de Diamond (o variable DIAMOND_DIR)")

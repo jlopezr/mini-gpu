@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.cli_common import add_json, add_prototype
 from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
 from tools.rtl_facts import (
     backend_from_rtl as _backend_from_rtl,
@@ -315,9 +316,9 @@ def format_text(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-p", "--prototype", required=True)
+    add_prototype(parser, required=True)
     parser.add_argument("--root", type=Path, default=None)
-    parser.add_argument("--json", action="store_true")
+    add_json(parser)
     args = parser.parse_args()
 
     root = args.root.resolve() if args.root else find_repo_root(Path.cwd())

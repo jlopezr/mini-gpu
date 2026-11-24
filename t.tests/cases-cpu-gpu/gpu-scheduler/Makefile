@@ -78,7 +78,7 @@ test: $(TEST_HOST_BIN)
 case: $(TEST_IMAGE)
 
 $(TEST_IMAGE): $(TEST_SOURCE) $(DEPS)
-	$(MINI_CC) $(TEST_SOURCE) $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
+	$(MINI_CC) $(TEST_SOURCE) $(SOURCE) --output-dir "$(CASE_OUTDIR)" -o "$@"
 
 sim: $(TEST_IMAGE)
 	$(SIM_SYS) "$(TEST_IMAGE)"
@@ -86,7 +86,7 @@ sim: $(TEST_IMAGE)
 demo: $(DEMO_IMAGE)
 
 $(DEMO_IMAGE): demo.c $(DEPS)
-	$(MINI_CC) demo.c $(SOURCE) --outdir "$(CASE_OUTDIR)" -o "$@"
+	$(MINI_CC) demo.c $(SOURCE) --output-dir "$(CASE_OUTDIR)" -o "$@"
 
 demo-sim: $(DEMO_IMAGE)
 	$(SIM_SYS) "$(DEMO_IMAGE)"

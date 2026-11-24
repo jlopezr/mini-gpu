@@ -409,7 +409,7 @@ todas las unidades `.c`:
 pide y nada más; lo único que pone solo es `crt0.s`, primero, cuando hay algún `.c`.
 
 ```bash
-mini-cc programa.c [otro.c|otro.s|otro.inc ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+mini-cc programa.c [otro.c|otro.s|otro.inc ...] [-o salida.bin] [--output-dir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [-p PROTOTIPO]
 ```
 
 **Flujo de build:**

@@ -24,7 +24,7 @@ de leer memoria es con la CPU parada. Son ~1,5 s de lectura por frame a
 1 Mbaud, pero los programas son deterministas desde el reset, así que el
 frame N sale igual siempre.
 
-Los ficheros salen como <prefijo>_NNN.bin, en RGB565 crudo de 320x240, en el
+Los ficheros salen como <prefix>_NNN.bin, en RGB565 crudo de 320x240, en el
 directorio actual: es lo que comen make-framebuffer y compare-frames.py.
 
 Habla MMIO v2 y por palabras enteras
@@ -112,10 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-p", "--prototype", required=True)
     parser.add_argument("program")
     parser.add_argument("--frames", type=int, default=3, help="Cuántos frames consecutivos capturar")
-    parser.add_argument("--desde", type=int, default=3,
+    parser.add_argument("--first-swap", type=int, default=3,
                         help="Número del primer intercambio a capturar (los primeros frames de las "
                              "demos son de arranque, a veces interesa empezar más tarde)")
-    parser.add_argument("--prefijo", default="capture")
+    parser.add_argument("--prefix", default="capture")
     parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
     args = parser.parse_args(argv)
     port = args.port if args.port is not None else detect_port()
@@ -124,10 +124,10 @@ def main(argv: list[str] | None = None) -> int:
     source = resolve_program(target.prototype_dir, args.program, target.root)
     binary = assemble(target.root, source, verbose=False) if source.suffix == ".asm" else source
 
-    print(f"Capturando {args.frames} frames de {args.program}, desde el intercambio {args.desde}")
+    print(f"Capturando {args.frames} frames de {args.program}, desde el intercambio {args.first_swap}")
 
     for n in range(args.frames):
-        swap = args.desde + n
+        swap = args.first_swap + n
 
         # El orden importa: resetear ANTES de escribir, porque el monitor
         # rechaza cualquier acceso a memoria mientras la CPU corre.
@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         status = read_reg(target.prototype_dir, port, STATUS)
         swaps = read_reg(target.prototype_dir, port, SWAP_COUNT)
 
-        fichero = f"{args.prefijo}_{swap:03d}.bin"
+        fichero = f"{args.prefix}_{swap:03d}.bin"
         # Ruta absoluta: run_monitor_cli ejecuta monitor.py con cwd en la
         # carpeta del prototipo, y el fichero debe salir en el directorio
         # actual del usuario, no ahí.
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("Comparar dos capturas:")
     print(f"  python3 tools/compare-frames.py --rgb565 320x240 \\")
-    print(f"      {args.prefijo}_{args.desde:03d}.bin {args.prefijo}_{args.desde + 1:03d}.bin")
+    print(f"      {args.prefix}_{args.first_swap:03d}.bin {args.prefix}_{args.first_swap + 1:03d}.bin")
     return 0
 
 

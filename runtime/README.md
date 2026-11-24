@@ -52,7 +52,7 @@ Makefile, `$(GPU_RUNTIME)`). Un programa que no lanza trabajos en la GPU desde C
 
 `gpu_runtime.inc` y `bench.inc` tienen una rama para la placa 36 y otra para los simuladores. Se elige con el
 símbolo `BOARD`, antes del `.include`: `-D BOARD` en la línea de órdenes del ensamblador (así lo hacen `run-board`,
-siempre, y `mini-cc --board`) o `.define BOARD` en el propio `.asm`. Un `.asm` que valga para el simulador y para la
+siempre, y `mini-cc -p N`) o `.define BOARD` en el propio `.asm`. Un `.asm` que valga para el simulador y para la
 placa no necesita variante `_board`: usa `.ifdef BOARD` para lo que sea solo de la placa y no repite el `.define`.
 
 ### ROP desde C

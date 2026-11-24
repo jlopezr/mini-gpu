@@ -8,6 +8,7 @@ plataformas ejecutan igual, y `t.tests/test` pasa a ser un envoltorio de dos
 lineas. Una sola implementacion y dos puertas de entrada, en vez de dos
 implementaciones que se separan en cuanto alguien toca una.
 """
+import argparse
 import os
 import subprocess
 import sys
@@ -15,16 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "t.tests"
-
-AYUDA = """\
-Uso: run-tests [--quick] [--verbose] [--hardware] [-- <args para run_tests.py>]
-
-  --quick      solo los tests unitarios de la infraestructura (sin simular casos)
-  --verbose    salida detallada
-  --hardware   la suite de casos contra placa real (backend fpga-gpu por defecto)
-  --           pasa el resto de argumentos directamente a run_tests.py
-"""
-
 
 def interprete() -> str:
     """El python del entorno del repo si lo hay, y si no el que nos ejecuta.
@@ -49,28 +40,39 @@ def entorno() -> dict:
     return variables
 
 
-def main(argv: list[str]) -> int:
-    rapido = False
-    detallado = False
-    hardware = False
-    extra: list[str] = []
+def parsear(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Las opciones propias y lo que se reenvía a `run_tests.py`.
 
-    while argv:
-        argumento = argv.pop(0)
-        if argumento == "--quick":
-            rapido = True
-        elif argumento == "--verbose":
-            detallado = True
-        elif argumento == "--hardware":
-            hardware = True
-        elif argumento in ("--help", "-h"):
-            print(AYUDA, end="")
-            return 0
+    Reenvía, por este orden, lo que `argparse` no reconoce y todo lo que sigue a un `--`
+    (que no se interpreta: es la forma de pasar algo que se llame igual que una opción
+    propia). `allow_abbrev=False` para que `--ver` no se coma una opción de `run_tests.py`.
+    """
+    propios, separador, despues = [], False, []
+    for argumento in argv:
+        if separador:
+            despues.append(argumento)
         elif argumento == "--":
-            extra.extend(argv)
-            break
+            separador = True
         else:
-            extra.append(argumento)
+            propios.append(argumento)
+    parser = argparse.ArgumentParser(
+        prog="run-tests", allow_abbrev=False, formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage="run-tests [--quick] [--verbose] [--hardware] [-- <args para run_tests.py>]",
+        description=__doc__.splitlines()[0],
+        epilog="Lo que no reconoce (casos, --backend, -p, --trace...) se reenvía a run_tests.py, "
+               "igual que todo lo que siga a `--`.")
+    parser.add_argument("--quick", action="store_true",
+                        help="solo los tests unitarios de la infraestructura (sin simular casos)")
+    parser.add_argument("--verbose", action="store_true", help="salida detallada")
+    parser.add_argument("--hardware", action="store_true",
+                        help="la suite de casos contra placa real (backend fpga-gpu por defecto)")
+    args, desconocidos = parser.parse_known_args(propios)
+    return args, [*desconocidos, *despues]
+
+
+def main(argv: list[str]) -> int:
+    args, extra = parsear(argv)
+    rapido, detallado, hardware = args.quick, args.verbose, args.hardware
 
     if not TESTS.is_dir():
         print(f"error: no existe {TESTS}", file=sys.stderr)

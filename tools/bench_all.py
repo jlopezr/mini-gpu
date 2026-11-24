@@ -37,6 +37,7 @@ for extra in (ROOT, ROOT / "t.tests"):
 from backends import fpga_cpu  # noqa: E402
 from backends import fpga_sys  # noqa: E402
 from backends import fpga_gpu  # noqa: E402
+from tools.cli_common import add_family, add_yes, prototype_number  # noqa: E402
 
 
 def _number(directory: Path) -> int:
@@ -90,12 +91,11 @@ def measure(family: str, number: int, label: str, assume_yes: bool, extra: list[
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--family", choices=("all", "cpu", "gpu"), default="all")
-    parser.add_argument("-p", "--prototype", action="append", type=int, metavar="N",
-                        help="solo este prototipo (se puede repetir)")
+    add_family(parser)
+    parser.add_argument("-p", "--prototype", action="append", type=prototype_number, metavar="PROTOTIPO",
+                        help="solo este prototipo (número o carpeta; se puede repetir)")
     parser.add_argument("--label", default="bench")
-    parser.add_argument("-y", "--yes", action="store_true",
-                        help="aceptar la carga de bitstreams sin preguntar")
+    add_yes(parser, "aceptar la carga de bitstreams sin preguntar")
     parser.add_argument("--list", action="store_true", help="solo listar, sin tocar la placa")
     parser.add_argument("--report-only", action="store_true", help="solo regenerar el informe")
     parser.add_argument("--no-report", action="store_true")

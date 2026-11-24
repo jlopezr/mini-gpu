@@ -43,10 +43,10 @@ RUN_DEPS ?= $(BOARD_IMAGE)
 all: $(IMAGE)
 
 $(IMAGE): $(SOURCE) $(EXTRA_DEPS)
-	$(MINI_CC) "$(SOURCE)" $(GPU_RUNTIME) $(LIBC) --outdir "$(OUTDIR)" -o "$(IMAGE)" $(BUILD_ARGS)
+	$(MINI_CC) "$(SOURCE)" $(GPU_RUNTIME) $(LIBC) --output-dir "$(OUTDIR)" -o "$(IMAGE)" $(BUILD_ARGS)
 
 $(BOARD_IMAGE): $(SOURCE) $(EXTRA_DEPS)
-	$(MINI_CC) "$(SOURCE)" $(GPU_RUNTIME) $(LIBC) --outdir "$(OUTDIR)" -o "$(BOARD_IMAGE)" --board $(BUILD_ARGS) $(BOARD_ARGS)
+	$(MINI_CC) "$(SOURCE)" $(GPU_RUNTIME) $(LIBC) --output-dir "$(OUTDIR)" -o "$(BOARD_IMAGE)" -p $(PROTOTYPE) $(BUILD_ARGS) $(BOARD_ARGS)
 
 sim: $(SIM_DEPS)
 	$(SIM_COMMAND)

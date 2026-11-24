@@ -5,7 +5,7 @@ Dos formas de decidir cuándo capturar:
 
   --swap N            para en el N-ésimo intercambio completado desde el
                        arranque (como `run_until: {"swap": N}` en un caso).
-  --instrucciones N    ejecuta N instrucciones SIN condición de parada, y
+  --instructions N     ejecuta N instrucciones SIN condición de parada, y
                        entonces captura en el intercambio que ocurra
                        después de esas N — útil para mirar el framebuffer
                        en un punto cualquiera del programa, sin tener que
@@ -15,7 +15,7 @@ Siempre usa 2.cpu-sim-func/minicpu_sim.py: es el único modelo de CPU
 funcional que hay (implementa la ISA entera, por delante del RTL de
 cualquier prototipo concreto — ver VERSIONS en t.tests/backends/sim_cpu.py).
 
-El formato de salida lo decide la extensión de SALIDA:
+El formato de salida lo decide la extensión de OUTPUT:
 
   .bin   RGB565 crudo, little-endian (lo que lee `frame-to-image.py`,
          `compare-frames.py` y `monitor.py read-block`).
@@ -26,7 +26,7 @@ El formato de salida lo decide la extensión de SALIDA:
 
 Uso:
     capture-frame-sim cases/video/bounce/bounce.asm --swap 20 frame.png
-    capture-frame-sim cases/video/band/band.asm --instrucciones 500000 frame.bin
+    capture-frame-sim cases/video/band/band.asm --instructions 500000 frame.bin
 """
 from __future__ import annotations
 
@@ -68,14 +68,14 @@ def _write_hex(path: Path, frame: bytes) -> None:
             handle.write(f"{word:04x}\n")
 
 
-def _write_via_frame_to_image(salida: Path, frame: bytes) -> None:
+def _write_via_frame_to_image(output: Path, frame: bytes) -> None:
     with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
         tmp.write(frame)
         tmp_path = Path(tmp.name)
     try:
         subprocess.run(
             [sys.executable, str(ROOT / "tools" / "frame-to-image.py"),
-             str(tmp_path), str(salida), "--tamano", f"{WIDTH}x{HEIGHT}"],
+             str(tmp_path), str(output), "--size", f"{WIDTH}x{HEIGHT}"],
             check=True,
         )
     finally:
@@ -86,14 +86,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("program", help="ruta o nombre de un .asm/.bin")
-    parser.add_argument("salida", type=Path,
+    parser.add_argument("output", type=Path,
                         help="fichero de salida; el formato lo decide la extensión")
     modo = parser.add_mutually_exclusive_group(required=True)
     modo.add_argument("--swap", type=int, metavar="N",
                       help="capturar tras el N-esimo intercambio completado")
-    modo.add_argument("--instrucciones", type=int, metavar="N",
+    modo.add_argument("--instructions", type=int, metavar="N",
                       help="ejecutar N instrucciones y capturar en el intercambio siguiente")
-    parser.add_argument("--max-instrucciones", type=int, default=50_000_000)
+    parser.add_argument("--run-limit", type=int, default=50_000_000,
+                        help="instrucciones máximas hasta el intercambio pedido")
     args = parser.parse_args(argv)
 
     root = find_repo_root(Path.cwd())
@@ -118,46 +119,46 @@ def main(argv: list[str] | None = None) -> int:
         # HALT_TARGET; la condición interna de captura es la que modela
         # explícitamente "parar después de N swaps".
         video.stop_after_swaps = args.swap
-        cpu.run(args.max_instrucciones)
+        cpu.run(args.run_limit)
         if not cpu.halted:
             raise SystemExit(
                 f"error: no se completó el intercambio {args.swap} en "
-                f"{args.max_instrucciones} instrucciones")
+                f"{args.run_limit} instrucciones")
     else:
-        if args.instrucciones < 0:
-            parser.error("--instrucciones no puede ser negativo")
-        for _ in range(args.instrucciones):
+        if args.instructions < 0:
+            parser.error("--instructions no puede ser negativo")
+        for _ in range(args.instructions):
             if cpu.halted:
                 raise SystemExit(
                     f"error: el programa paró (HALT) antes de las "
-                    f"{args.instrucciones} instrucciones pedidas")
+                    f"{args.instructions} instrucciones pedidas")
             cpu.step()
         # Capturar el siguiente intercambio posterior al punto solicitado.
         # stop_after_swaps compara con el contador absoluto y no altera el
         # estado MMIO visible del programa.
         video.stop_after_swaps = video.swap_count + 1
-        restantes = args.max_instrucciones - args.instrucciones
+        restantes = args.run_limit - args.instructions
         pasos = 0
         while not cpu.halted:
             if pasos >= restantes:
                 raise SystemExit(
                     f"error: no hubo ningún intercambio en las {restantes} "
-                    "instrucciones siguientes a --instrucciones")
+                    "instrucciones siguientes a --instructions")
             cpu.step()
             pasos += 1
 
     frame = bytes(cpu.memory[video.fb_front:video.fb_front + FRAME_BYTES])
 
-    sufijo = args.salida.suffix.lower()
+    sufijo = args.output.suffix.lower()
     if sufijo == ".bin":
-        args.salida.write_bytes(frame)
+        args.output.write_bytes(frame)
     elif sufijo == ".hex":
-        _write_hex(args.salida, frame)
+        _write_hex(args.output, frame)
     else:
-        _write_via_frame_to_image(args.salida, frame)
+        _write_via_frame_to_image(args.output, frame)
 
     print(f"intercambio {video.swap_count}, {cpu.instructions_executed} "
-         f"instrucciones -> {args.salida}")
+         f"instrucciones -> {args.output}")
     return 0
 
 

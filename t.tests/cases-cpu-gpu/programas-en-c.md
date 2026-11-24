@@ -37,12 +37,12 @@ y su implementación `string.c` en `runtime/src/`, que también se pide en la l�
 `malloc`. Las herramientas que comparan el C con el
 ensamblador (`compare.py`, `compare_race.py`, `opt_stats.py`) están en
 [`32.cpu-gpu-func-sim/compare`](../../32.cpu-gpu-func-sim/compare/README.md). Las salidas de la compilación van a
-`_build/c/` en la raíz del repo (ignorada por git) o a donde diga `--outdir`.
+`_build/c/` en la raíz del repo (ignorada por git) o a donde diga `--output-dir`.
 
 `mini-cc` acepta cualquier `.c`, no solo los de esta carpeta:
 
 ```text
-mini-cc programa.c [otro.c|otro.s|otro.inc ...] [-o salida.bin] [--outdir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [--board]
+mini-cc programa.c [otro.c|otro.s|otro.inc ...] [-o salida.bin] [--output-dir DIR] [-I DIR]... [--data ETIQUETA=FICHERO]... [-p PROTOTIPO]
 ```
 
 Las carpetas de programa que contienen C tienen además un `Makefile` fino. Desde la carpeta del programa,
@@ -70,7 +70,7 @@ espera a que termine. Por tanto `make sim`, `make debug`, `make run` y los `test
 autocontenido, mientras que `make compare` conserva la comparación C/ensamblador de la carga original.
 
 `--data` pega un binario tras el código con `.incbin`, bajo una etiqueta que el C declara con `extern unsigned
-etiqueta[]`. `mini-cc` no genera datos: quien llama los prepara antes (ver [plane](race/plane/README.md)). `--board` define
+etiqueta[]`. `mini-cc` no genera datos: quien llama los prepara antes (ver [plane](race/plane/README.md)). `-p` define
 `BOARD` para el ensamblador (`.define BOARD`), que activa en `gpu_runtime.inc` y `bench.inc` las ramas de la
 placa 36 (lanzar con `RUN`, ciclos de CPU reales).
 
@@ -135,7 +135,7 @@ abajo), así que también se puede escribir con funciones.
   la función, marco incluido. Es un error, con su nombre, llamar a una de otra unidad (`memcpy`), a una
   recursiva o por un puntero ([`simt/calls`](simt/calls/calls.c) prueba lo que sí se puede). Sin
   `long long`, ni `float`, ni división sin signo, ni `%` (es `REM`: con `a - a / b * b`).
-- **Placa:** solo está probado el cubo (`--board`, runtime con `RUN`, la 36 no tiene `WARP_START`). El plano
+- **Placa:** solo está probado el cubo (`-p 36`, runtime con `RUN`, la 36 no tiene `WARP_START`). El plano
   compila y pasa en el simulador, pero no se ha probado en la placa.
 
 Las pruebas son `CKernelTest` y `CDivergenceTest` en `test_cpu_gpu_sim.py` (se omite si no hay compilador: necesita

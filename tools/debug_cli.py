@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools import debug_source, sim_peripherals  # noqa: E402
+from tools.cli_common import add_serial_timeout  # noqa: E402
 from tools.debug_core import (  # noqa: E402
     CommandError, DebugSession,
 )
@@ -40,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="prototipo de la placa (numero, nombre o ruta)")
     parser.add_argument("--port", default=None,
                         help="puerto serie; por defecto se autodetecta")
-    parser.add_argument("--serial-timeout", type=float, default=2.0)
+    add_serial_timeout(parser)
     parser.add_argument("--memory-size", type=lambda v: int(v, 0),
                         default=32 * 1024 * 1024,
                         help="memoria del simulador en bytes (admite 0x...)")

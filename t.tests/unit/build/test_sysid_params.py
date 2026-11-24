@@ -60,6 +60,10 @@ ESPERADO = {
     # Como la 35 + DMA (bit 8): dma_engine.sv en 0x8050_0000, interfaz
     # experimental (mmio.md §11.1).
     "38.fpga-cpu-pipelined": (0x0B37, 0x7, 0x0200_0000),
+    # Como la 35 (CPU + INPUT) + AUDIO (bit 12).
+    "42.fpga-cpu-hdmi-audio": (0x1A37, 0x7, 0x0200_0000),
+    # Como la 36 (CPU y GPU + INPUT) + AUDIO (bit 12).
+    "44.fpga-cpu-gpu-pipelined-rop-audio": (0x1E37, 0x7, 0x0200_0000),
 }
 
 DEFINE = re.compile(r"^`define\s+(SYSID_\w+)\s+32'h([0-9A-Fa-f_]+)\s*$",

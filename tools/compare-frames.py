@@ -19,9 +19,9 @@ columna, dice inmediatamente que clase de fallo es.
 Uso
 ---
 
-    compare-frames.py esperado.ppm obtenido.ppm
-    compare-frames.py --rgb565 320x240 esperado.bin capturado.bin
-    compare-frames.py --tolerancia 2 a.ppm b.ppm
+    compare-frames.py expected.ppm actual.ppm
+    compare-frames.py --rgb565 320x240 expected.bin captured.bin
+    compare-frames.py --tolerance 2 a.ppm b.ppm
 
 Codigo de salida 0 si son iguales, 1 si no. Pensado para encadenar en un script
 de pruebas.
@@ -144,35 +144,35 @@ def comparar(a, b, tolerancia):
 def main():
     parser = argparse.ArgumentParser(
         description="Compara dos frames y dice donde difieren.")
-    parser.add_argument("esperado")
-    parser.add_argument("obtenido")
+    parser.add_argument("expected")
+    parser.add_argument("actual")
     parser.add_argument(
         "--rgb565", metavar="ANCHOxALTO",
         help="los dos ficheros son volcados crudos RGB565 de ese tamano")
     parser.add_argument(
-        "--tolerancia", type=int, default=0,
+        "--tolerance", type=int, default=0,
         help="diferencia maxima admitida por componente (por defecto 0)")
     parser.add_argument(
         "--diff", metavar="FICHERO",
         help="escribe un PPM con las diferencias en magenta")
     parser.add_argument(
-        "--max-listados", type=int, default=8,
+        "--max-listed", type=int, default=8,
         help="cuantos pixeles distintos listar (por defecto 8)")
     args = parser.parse_args()
 
     try:
         if args.rgb565:
             ancho, alto = (int(v) for v in args.rgb565.lower().split("x"))
-            a = leer_rgb565(args.esperado, ancho, alto)
-            b = leer_rgb565(args.obtenido, ancho, alto)
+            a = leer_rgb565(args.expected, ancho, alto)
+            b = leer_rgb565(args.actual, ancho, alto)
         else:
-            a = leer_ppm(args.esperado)
-            b = leer_ppm(args.obtenido)
+            a = leer_ppm(args.expected)
+            b = leer_ppm(args.actual)
     except (OSError, ValueError) as e:
         print(f"ERROR: {e}")
         return 2
 
-    malos = comparar(a, b, args.tolerancia)
+    malos = comparar(a, b, args.tolerance)
     if malos is None:
         return 1
 
@@ -187,11 +187,11 @@ def main():
     porcentaje = 100.0 * len(malos) / total
     print(f"FALLO: {len(malos)} de {total} pixeles distintos ({porcentaje:.2f} %)")
     print(f"  {describir_region(malos, ancho, alto)}")
-    for i in malos[:args.max_listados]:
+    for i in malos[:args.max_listed]:
         x, y = i % ancho, i // ancho
         print(f"  ({x:4d},{y:4d})  esperado {pix_a[i]}  obtenido {pix_b[i]}")
-    if len(malos) > args.max_listados:
-        print(f"  ... y {len(malos) - args.max_listados} mas")
+    if len(malos) > args.max_listed:
+        print(f"  ... y {len(malos) - args.max_listed} mas")
 
     if args.diff:
         conjunto = set(malos)

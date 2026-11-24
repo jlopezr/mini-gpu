@@ -537,7 +537,7 @@ sistema completo en vez de aislado.
 ```powershell
 ..\.venv\Scripts\apio.exe test video_fullframe_tb.v
 ..\.venv\Scripts\python.exe ..\tools\frame-to-image.py frame_full.bin mirar.jpg
-..\.venv\Scripts\python.exe ..\tools\frame-to-image.py frame_full.hex mirar.png --escala 2
+..\.venv\Scripts\python.exe ..\tools\frame-to-image.py frame_full.hex mirar.png --scale 2
 ```
 
 Vuelca el framebuffer en dos formatos a la vez: `.bin` en RGB565 crudo, que es

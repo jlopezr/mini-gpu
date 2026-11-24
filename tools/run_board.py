@@ -20,6 +20,8 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.cli_common import (add_archived_build, add_family, add_port, add_prototype,
+                              add_serial_timeout, add_yes)
 from tools.mmio_map import MMIO_VIDEO_BASE, MMIO_VIDEO_STATUS_OFF
 from tools.prototype import PrototypeResolutionError, find_repo_root, resolve_prototype
 from tools.prototype_report import _capabilities
@@ -248,6 +250,21 @@ def _timing_warnings(bitstream: Path) -> list[str]:
     return failing
 
 
+def archived_source(target: Target, bitstream: str | None, toolchain: str | None) -> str | None:
+    """Qué build archivado se pide con `-b/--bitstream` o `-t/--toolchain`, o None si ninguno.
+
+    `--toolchain` busca el build más nuevo de esa herramienta con `hardware.bit`, `exit_code` 0 y
+    fuentes iguales a las actuales; si no hay ninguno, se niega sin tocar la placa."""
+    if toolchain:
+        from tools import board_record
+        folder, reason = board_record.find_latest_build(target.prototype_dir, toolchain)
+        if folder is None:
+            raise SystemExit(f"error: --toolchain {toolchain}: {reason}.")
+        print(f"--toolchain {toolchain}: {folder.name}")
+        return str(folder)
+    return bitstream
+
+
 def upload_archived(target: Target, port: str, serial_timeout: float,
                     source: str, policy) -> int:
     """Programa un bitstream archivado (`board-upload --bitstream`) en lugar del
@@ -335,9 +352,9 @@ def open_console(target: Target, port: str) -> int:
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("-p", "--prototype", required=True)
-    parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
-    parser.add_argument("--serial-timeout", type=float, default=1.0)
+    add_prototype(parser, required=True)
+    add_port(parser)
+    add_serial_timeout(parser)
 
 
 def _resolve_port(args: argparse.Namespace) -> str:
@@ -351,7 +368,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rebuild", action="store_true", help="fuerza `apio upload` aunque la identidad ya coincida")
     parser.add_argument("--upload", dest="upload", action="store_true", default=None)
     parser.add_argument("--no-upload", dest="upload", action="store_false")
-    parser.add_argument("-y", "--yes", action="store_true", help="autoriza la carga del bitstream sin preguntar")
+    add_yes(parser, "autoriza la carga del bitstream sin preguntar")
+    add_archived_build(parser)
     parser.add_argument("--reset", action="store_true", help="solo resetea la CPU")
     parser.add_argument("--no-run", action="store_true", help="carga el programa pero no lo arranca")
     parser.add_argument("--interactive", action="store_true", help="deja una consola serie interactiva al terminar")
@@ -362,7 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     target = resolve_target(args.prototype)
 
     policy = board.UploadPolicy(allowed=args.upload is not False, assume_yes=args.yes)
-    code = ensure_uploaded(target, port, args.serial_timeout, policy, args.rebuild)
+    source = archived_source(target, args.bitstream, args.toolchain)
+    if source:
+        if args.rebuild or args.upload is False:
+            raise SystemExit("error: -b/--bitstream y -t/--toolchain no se combinan con --rebuild ni --no-upload")
+        code = upload_archived(target, port, args.serial_timeout, source, policy)
+    else:
+        code = ensure_uploaded(target, port, args.serial_timeout, policy, args.rebuild)
     if code != 0:
         return code
 
@@ -396,21 +420,19 @@ def main_upload(argv: list[str] | None = None) -> int:
     parser.add_argument("--rebuild", action="store_true", help="fuerza `apio upload` aunque la identidad ya coincida")
     parser.add_argument("--no-upload", dest="upload", action="store_false", default=None,
                         help="falla en vez de subir si el bitstream no coincide")
-    parser.add_argument("-y", "--yes", action="store_true", help="autoriza la carga sin preguntar")
-    parser.add_argument("--bitstream", metavar="RUTA",
-                        help="programa ESTE bitstream archivado (un hardware.bit o la carpeta "
-                             "de reports/ que lo contiene) en lugar del de _build/default, y "
-                             "comprueba la identidad. Avisa si ese build no cerro timing")
+    add_yes(parser, "autoriza la carga sin preguntar")
+    add_archived_build(parser)
     args = parser.parse_args(argv)
     port = _resolve_port(args)
     target = resolve_target(args.prototype)
     policy = board.UploadPolicy(allowed=args.upload is not False, assume_yes=args.yes)
-    if args.bitstream:
+    source = archived_source(target, args.bitstream, args.toolchain)
+    if source:
         if args.rebuild:
-            raise SystemExit("error: --bitstream y --rebuild son incompatibles")
+            raise SystemExit("error: -b/--bitstream y -t/--toolchain son incompatibles con --rebuild")
         if args.upload is False:
-            raise SystemExit("error: --bitstream y --no-upload son incompatibles")
-        return upload_archived(target, port, args.serial_timeout, args.bitstream, policy)
+            raise SystemExit("error: -b/--bitstream y -t/--toolchain son incompatibles con --no-upload")
+        return upload_archived(target, port, args.serial_timeout, source, policy)
     return ensure_uploaded(target, port, args.serial_timeout, policy, args.rebuild)
 
 
@@ -438,36 +460,20 @@ def main_test(argv: list[str] | None = None) -> int:
         epilog="El resto de opciones (TEST_JSON, --trace, -y, --measure...) "
               "se reenvían tal cual a run_tests.py.",
     )
-    parser.add_argument("-p", "--prototype", required=True)
-    parser.add_argument("--port", default=None, help="por defecto, detecta el primer adaptador FTDI conectado")
-    parser.add_argument("--family", choices=("cpu", "gpu", "all"), default="all",
-                        help="en un prototipo CPU+GPU (36 y 37), qué familia probar; "
-                             "por defecto las dos, una detrás de otra")
+    add_prototype(parser, required=True)
+    add_port(parser)
+    add_family(parser)
     parser.add_argument("--no-record", dest="record", action="store_false", default=True,
                         help="no guarda el registro de la prueba (por defecto se escribe "
                              "reports/<build>/board-tests.json con el hash del bitstream, "
                              "los casos y su resultado)")
-    chosen = parser.add_mutually_exclusive_group()
-    chosen.add_argument("--bitstream", metavar="RUTA",
-                        help="programa ESTE bitstream archivado (un hardware.bit o su carpeta de "
-                             "reports/) y prueba contra el, sin recompilar con apio")
-    chosen.add_argument("--toolchain", choices=("apio", "diamond"),
-                        help="programa el ultimo build archivado de esa herramienta cuyas "
-                             "fuentes sean las actuales y prueba contra el, sin recompilar")
+    add_archived_build(parser)
     args, extra = parser.parse_known_args(argv)
 
     port = args.port if args.port is not None else detect_port()
     target = resolve_target(args.prototype)
-    if args.bitstream or args.toolchain:
-        if args.toolchain:
-            from tools import board_record
-            folder, reason = board_record.find_latest_build(target.prototype_dir, args.toolchain)
-            if folder is None:
-                raise SystemExit(f"error: --toolchain {args.toolchain}: {reason}.")
-            source = str(folder)
-            print(f"--toolchain {args.toolchain}: {folder.name}")
-        else:
-            source = args.bitstream
+    source = archived_source(target, args.bitstream, args.toolchain)
+    if source:
         yes = any(item in ("-y", "--yes") for item in extra)
         policy = board.UploadPolicy(allowed=True, assume_yes=yes)
         code = upload_archived(target, port, 1.0, source, policy)
@@ -532,7 +538,7 @@ def main_test(argv: list[str] | None = None) -> int:
             handle, name = tempfile.mkstemp(prefix="board-results-", suffix=".json")
             os.close(handle)
             results_file = Path(name)
-            command += ["--results-json", str(results_file)]
+            command += ["--output-results-json", str(results_file)]
         print(f"$ {' '.join(command)}")
         resultado = max(resultado, subprocess.run(command).returncode)
         if results_file is not None:

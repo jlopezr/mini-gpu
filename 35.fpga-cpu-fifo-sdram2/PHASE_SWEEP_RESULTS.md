@@ -148,7 +148,7 @@ tools\phase-sweep.ps1 `
   --length 0x10000 `
   --repetitions 2 `
   --restore-phase 10 `
-  --output 35.fpga-cpu-fifo-sdram2\reports\phase-sweep `
+  --output-prefix 35.fpga-cpu-fifo-sdram2\reports\phase-sweep `
   --yes
 ```
 

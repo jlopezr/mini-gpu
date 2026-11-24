@@ -67,7 +67,9 @@ class BoardTest(unittest.TestCase):
 
     def test_version_correcta_no_sube_nada(self):
         monitor = fake_monitor([(1, 6)])
-        with mock.patch.object(board, "upload") as upload:
+        # `_sources_changed` mira el árbol real (relativo al cwd): aquí se prueba solo la versión.
+        with mock.patch.object(board, "upload") as upload, \
+                mock.patch.object(board, "_sources_changed", return_value=None):
             ensure(monitor, board.UploadPolicy())
         upload.assert_not_called()
 

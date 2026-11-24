@@ -26,8 +26,8 @@ el mismo pixel. La comparacion se hace siempre sobre el `.bin` o el `.ppm`, con
 Uso:
 
     frame-to-image.py frame_full.bin salida.jpg
-    frame-to-image.py frame_full.hex salida.png --escala 2
-    frame-to-image.py capturado.bin mirar.png --tamano 320x240
+    frame-to-image.py frame_full.hex salida.png --scale 2
+    frame-to-image.py capturado.bin mirar.png --size 320x240
 """
 
 import argparse
@@ -56,7 +56,7 @@ def leer_bin(ruta: Path, ancho: int, alto: int) -> list:
     if len(datos) != esperado:
         raise ValueError(
             f"{ruta.name}: {len(datos)} bytes para {ancho}x{alto} en RGB565, "
-            f"se esperaban {esperado}. ¿Es el tamano correcto? (--tamano)"
+            f"se esperaban {esperado}. ¿Es el tamano correcto? (--size)"
         )
     return [expandir(datos[i] | (datos[i + 1] << 8))
             for i in range(0, len(datos), 2)]
@@ -92,13 +92,13 @@ def leer_ppm(ruta: Path) -> tuple[int, int, list]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("entrada")
-    parser.add_argument("salida")
+    parser.add_argument("input")
+    parser.add_argument("output")
     parser.add_argument(
-        "--tamano", default=f"{ANCHO_POR_DEFECTO}x{ALTO_POR_DEFECTO}",
+        "--size", default=f"{ANCHO_POR_DEFECTO}x{ALTO_POR_DEFECTO}",
         help="ANCHOxALTO del framebuffer; los PPM lo llevan dentro")
     parser.add_argument(
-        "--escala", type=int, default=1,
+        "--scale", type=int, default=1,
         help="ampliar por un entero. 2 reproduce el escalado del scanout, que "
              "es como se ve en el monitor de verdad")
     args = parser.parse_args()
@@ -111,9 +111,9 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    entrada = Path(args.entrada)
+    entrada = Path(args.input)
     try:
-        ancho, alto = (int(v) for v in args.tamano.lower().split("x"))
+        ancho, alto = (int(v) for v in args.size.lower().split("x"))
         sufijo = entrada.suffix.lower()
         if sufijo == ".ppm":
             ancho, alto, pixeles = leer_ppm(entrada)
@@ -127,18 +127,18 @@ def main() -> int:
 
     imagen = Image.new("RGB", (ancho, alto))
     imagen.putdata(pixeles)
-    if args.escala > 1:
+    if args.scale > 1:
         # NEAREST y no otra cosa: interpolar un framebuffer de prueba
         # emborrona justo los bordes de un pixel, que es donde suelen estar los
         # errores que se quieren ver.
-        imagen = imagen.resize((ancho * args.escala, alto * args.escala),
+        imagen = imagen.resize((ancho * args.scale, alto * args.scale),
                                Image.NEAREST)
 
-    salida = Path(args.salida)
+    salida = Path(args.output)
     opciones = {"quality": 95} if salida.suffix.lower() in (".jpg", ".jpeg") else {}
     imagen.save(salida, **opciones)
     print(f"{ancho}x{alto}"
-          f"{f' escalado a {ancho * args.escala}x{alto * args.escala}' if args.escala > 1 else ''}"
+          f"{f' escalado a {ancho * args.scale}x{alto * args.scale}' if args.scale > 1 else ''}"
           f" -> {salida}")
     return 0
 

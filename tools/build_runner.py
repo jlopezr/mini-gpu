@@ -913,10 +913,10 @@ def _main() -> int:
     clean_cmd.add_argument("--older-than", type=int, default=None, help="solo logs")
     clean_cmd.add_argument("--max-size", default=None, help="solo logs")
     clean_cmd.add_argument("--dry-run", action="store_true")
-    clean_cmd.add_argument("--yes", action="store_true", default=False)
+    clean_cmd.add_argument("-y", "--yes", action="store_true", default=False)
 
     run_cmd = subparsers.add_parser("run", help="Ejecuta y registra un comando de build")
-    run_cmd.add_argument("-p", "--prototype", default="17")
+    run_cmd.add_argument("-p", "--prototype", required=True)
     run_cmd.add_argument("--label", default="build")
     run_cmd.add_argument("--root", type=Path, default=None)
     run_cmd.add_argument("--background", action="store_true", help="Lanza el build en segundo plano y vuelve enseguida")
@@ -942,13 +942,13 @@ def _main() -> int:
     test_cmd.add_argument("--label", default="test")
     test_cmd.add_argument("--root", type=Path, default=None)
     test_cmd.add_argument("--quick", action="store_true", help="solo fixtures + tests Python, sin apio test")
-    test_cmd.add_argument("--full", "--slow", dest="full", action="store_true",
+    test_cmd.add_argument("--full", dest="full", action="store_true",
                           help="incluye los bancos marcados TEST-LENTO (por defecto se omiten)")
     test_cmd.add_argument("--lint", action="store_true", help="añade apio lint")
     test_cmd.add_argument("--lint-only", action="store_true", help="solo apio lint, sin fixtures/tests/regresión RTL")
     test_cmd.add_argument("--verbose", action="store_true")
-    test_cmd.add_argument("--jobs", type=int, default=None,
-                          help="Grupos de bancos RTL en paralelo (por defecto 2; 1 = como antes)")
+    test_cmd.add_argument("-j", "--jobs", type=int, default=None, metavar="N",
+                          help="Grupos de bancos RTL en paralelo (0 = automático, ahora 2; 1 = como antes)")
     test_cmd.add_argument("--background", action="store_true", help="Lanza el test en segundo plano y vuelve enseguida")
 
     sweep_cmd = subparsers.add_parser("sweep", help="Barrido de semillas de placement (tools/sweep_report.py)")
@@ -959,7 +959,7 @@ def _main() -> int:
     sweep_cmd.add_argument("--root", type=Path, default=None)
     sweep_cmd.add_argument("--seeds", type=int, nargs="+", default=None,
                            help="Semillas a barrer (por defecto 1 2 3 4 5)")
-    sweep_cmd.add_argument("--report-dir", type=Path, default=None)
+    sweep_cmd.add_argument("--build-dir", type=Path, default=None)
     sweep_cmd.add_argument("--live", action="store_true",
                            help="Barre la síntesis de un build EN CURSO, sin esperar a que termine "
                                 "su rutado: para lanzar las demás semillas mientras la del apio.ini "
@@ -980,8 +980,8 @@ def _main() -> int:
     sweep_cmd.add_argument("--nextpnr-options", nargs="+", default=[], metavar="OPCION",
                            help="Opciones extra de nextpnr sin guiones y con = para el valor, "
                                 "p. ej. tmg-ripup placer-heap-timingweight=30")
-    sweep_cmd.add_argument("--jobs", type=int, default=None,
-                           help="Semillas en paralelo (por defecto, un tercio de los hilos de la máquina)")
+    sweep_cmd.add_argument("-j", "--jobs", type=int, default=None, metavar="N",
+                           help="Semillas en paralelo (0 = automático: un tercio de los hilos de la máquina)")
     sweep_cmd.add_argument("--background", action="store_true", help="Lanza el barrido en segundo plano y vuelve enseguida")
 
     track_cmd = subparsers.add_parser("_track", help=argparse.SUPPRESS)
@@ -1136,8 +1136,8 @@ def _main() -> int:
         sweep_script = Path(__file__).resolve().with_name("sweep_report.py")
         command = [sys.executable, str(sweep_script), "--prototype", args.prototype,
                   "--seeds", *(str(seed) for seed in (args.seeds or [1, 2, 3, 4, 5]))]
-        if args.report_dir is not None:
-            command += ["--report-dir", str(args.report_dir)]
+        if args.build_dir is not None:
+            command += ["--build-dir", str(args.build_dir)]
         if args.live:
             command.append("--live")
         if args.nextpnr_options:

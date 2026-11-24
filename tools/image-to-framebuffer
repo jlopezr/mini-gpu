@@ -12,13 +12,13 @@ Sobre el tamaño
 El monitor recibe 640x480, pero el framebuffer es de 320x240: el scanout
 duplica cada píxel. Así que una imagen con relación de aspecto 4:3 —640x480,
 1024x768, 1600x1200— entra sin deformarse; cualquier otra hay que decidir qué
-hacer con ella, y eso es `--ajuste`:
+hacer con ella, y eso es `--fit`:
 
-  recortar   (por defecto) llena los 320x240 y recorta lo que sobra por el
+  crop       (por defecto) llena los 320x240 y recorta lo que sobra por el
              lado largo. Es lo que se quiere para mirar una foto.
-  encajar    mete la imagen entera y rellena con `--fondo`. No recorta nada,
+  fit        mete la imagen entera y rellena con `--background-color`. No recorta nada,
              pero deja bandas.
-  estirar    deforma hasta 320x240. Solo sirve si la imagen ya venía
+  stretch    deforma hasta 320x240. Solo sirve si la imagen ya venía
              preparada para este tamaño.
 
 El `--upload`
@@ -36,7 +36,7 @@ constantes específicas de un prototipo.
 Uso:
 
     image-to-framebuffer foto.jpg foto_fb.bin
-    image-to-framebuffer foto.jpg foto_fb.bin --ajuste encajar --fondo 0,0,64
+    image-to-framebuffer foto.jpg foto_fb.bin --fit fit --background-color 0,0,64
     image-to-framebuffer foto.jpg foto_fb.bin --upload --prototype 22
 """
 from __future__ import annotations
@@ -90,12 +90,12 @@ def convertir(entrada: Path, ancho: int, alto: int, ajuste: str,
         imagen = Image.alpha_composite(plano, imagen)
     imagen = imagen.convert("RGB")
 
-    if ajuste == "estirar":
+    if ajuste == "stretch":
         # LANCZOS y no NEAREST: aquí se reduce una foto, no se mira un
         # framebuffer de prueba pixel a pixel. Es lo contrario que en
         # frame-to-image.py y por la misma razón.
         imagen = imagen.resize((ancho, alto), Image.LANCZOS)
-    elif ajuste == "recortar":
+    elif ajuste == "crop":
         escala = max(ancho / imagen.width, alto / imagen.height)
         intermedia = (max(1, round(imagen.width * escala)),
                       max(1, round(imagen.height * escala)))
@@ -103,7 +103,7 @@ def convertir(entrada: Path, ancho: int, alto: int, ajuste: str,
         izquierda = (imagen.width - ancho) // 2
         arriba = (imagen.height - alto) // 2
         imagen = imagen.crop((izquierda, arriba, izquierda + ancho, arriba + alto))
-    else:  # encajar
+    else:  # fit
         escala = min(ancho / imagen.width, alto / imagen.height)
         intermedia = (max(1, round(imagen.width * escala)),
                       max(1, round(imagen.height * escala)))
@@ -125,21 +125,21 @@ def convertir(entrada: Path, ancho: int, alto: int, ajuste: str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("entrada", help="imagen de partida (cualquier cosa que lea Pillow)")
-    parser.add_argument("salida", help="framebuffer RGB565 crudo a escribir")
-    parser.add_argument("--tamano", default=f"{WIDTH}x{HEIGHT}",
+    parser.add_argument("input", help="imagen de partida (cualquier cosa que lea Pillow)")
+    parser.add_argument("output", help="framebuffer RGB565 crudo a escribir")
+    parser.add_argument("--size", default=f"{WIDTH}x{HEIGHT}",
                         help="ANCHOxALTO del framebuffer (por defecto 320x240, "
                              "que el scanout duplica a 640x480)")
-    parser.add_argument("--ajuste", choices=("recortar", "encajar", "estirar"),
-                        default="recortar",
-                        help="qué hacer si la imagen no es 4:3 (por defecto: recortar)")
-    parser.add_argument("--fondo", type=parse_color, default=(0, 0, 0),
-                        help="R,G,B de las bandas de --ajuste encajar y del alfa")
+    parser.add_argument("--fit", choices=("crop", "fit", "stretch"),
+                        default="crop",
+                        help="qué hacer si la imagen no es 4:3 (por defecto: crop)")
+    parser.add_argument("--background-color", type=parse_color, default=(0, 0, 0),
+                        help="R,G,B de las bandas de --fit fit y del alfa")
     parser.add_argument("--upload", action="store_true",
                         help="además, cargarlo en la placa y activar el scanout")
     parser.add_argument("-p", "--prototype", default=None,
                         help="prototipo de destino; obligatorio con --upload")
-    parser.add_argument("--direccion", default=f"0x{FB_BASE:08x}",
+    parser.add_argument("--address", default=f"0x{FB_BASE:08x}",
                         help="dirección del framebuffer en SDRAM (alinéala a 16: "
                              "la 22 trunca los bits bajos en silencio)")
     parser.add_argument("--port", default=None,
@@ -150,12 +150,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--upload necesita --prototype")
 
     try:
-        ancho, alto = (int(v) for v in args.tamano.lower().split("x"))
+        ancho, alto = (int(v) for v in args.size.lower().split("x"))
     except ValueError:
-        print(f"ERROR: --tamano '{args.tamano}': se esperaba ANCHOxALTO", file=sys.stderr)
+        print(f"ERROR: --size '{args.size}': se esperaba ANCHOxALTO", file=sys.stderr)
         return 2
 
-    direccion = int(args.direccion, 0)
+    direccion = int(args.address, 0)
 
     try:
         from PIL import Image  # noqa: F401
@@ -164,17 +164,17 @@ def main(argv: list[str] | None = None) -> int:
         print("    .venv\\Scripts\\pip install -r requirements.txt", file=sys.stderr)
         return 2
 
-    entrada = Path(args.entrada)
+    entrada = Path(args.input)
     try:
-        datos = convertir(entrada, ancho, alto, args.ajuste, args.fondo)
+        datos = convertir(entrada, ancho, alto, args.fit, args.background_color)
     except OSError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
 
-    salida = Path(args.salida)
+    salida = Path(args.output)
     salida.write_bytes(datos)
     print(f"{entrada} -> {salida}: {len(datos)} bytes "
-          f"({ancho}x{alto} RGB565, {args.ajuste})")
+          f"({ancho}x{alto} RGB565, {args.fit})")
 
     if not args.upload:
         print(f"Cargar a mano: monitor.py write-block 0x{direccion:08x} {salida}")

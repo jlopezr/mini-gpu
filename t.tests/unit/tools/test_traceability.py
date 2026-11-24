@@ -449,7 +449,7 @@ requires: [A]
             with self.subTest(command=arguments[0]):
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    status = main([*arguments, "--format", "json", "--root", str(PROJECT)])
+                    status = main([*arguments, "--json", "--root", str(PROJECT)])
                 self.assertEqual(status, 0)
                 self.assertTrue(assertion(json.loads(output.getvalue())))
 
@@ -514,7 +514,7 @@ type: requirement
     def test_cli_lists_and_executes_registered_queries(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            status = main(["query", "list", "--format", "json", "--root", str(PROJECT)])
+            status = main(["query", "list", "--json", "--root", str(PROJECT)])
         definitions = json.loads(output.getvalue())
         self.assertEqual(status, 0)
         self.assertIn("unimplemented", {item["name"] for item in definitions})
@@ -523,7 +523,7 @@ type: requirement
         with contextlib.redirect_stdout(output):
             status = main([
                 "query", "verifications-of", "SPEC-DEVICE#identity-register",
-                "--format", "json", "--root", str(PROJECT),
+                "--json", "--root", str(PROJECT),
             ])
         result = json.loads(output.getvalue())
         self.assertEqual(status, 0)
@@ -855,7 +855,7 @@ scna: [docs/**]
             self.write(root, "sub/ignored.md", "x\n")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                status = main(["coverage", "--format", "json", "--root", str(root)])
+                status = main(["coverage", "--json", "--root", str(root)])
             self.assertEqual(status, 0)
             data = json.loads(output.getvalue())
             self.assertEqual(data["untraced"], [{"path": "docs/plain.md", "lines": 3, "copies": []},
@@ -878,7 +878,7 @@ scna: [docs/**]
             self.write(root, "c/own.md", "distinto\n")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                main(["coverage", "--unique", "--format", "json", "--root", str(root)])
+                main(["coverage", "--unique", "--json", "--root", str(root)])
             data = json.loads(output.getvalue())
             self.assertEqual(data["untraced"], [
                 {"path": "a/shared.md", "lines": 2, "copies": ["b/shared.md", "c/shared.md"]},
@@ -897,7 +897,7 @@ scna: [docs/**]
             self.write(root, "7.c/empty.md", "")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                status = main(["coverage", "--repeated", "--format", "json", "--root", str(root)])
+                status = main(["coverage", "--repeated", "--json", "--root", str(root)])
             self.assertEqual(status, 0)
             data = json.loads(output.getvalue())
             self.assertEqual([(item["path"], item["copy_of"]) for item in data["repeated"]],

@@ -71,8 +71,9 @@ def main() -> int:
     parser.add_argument("--run-limit", type=int, default=100_000_000,
                         help="límite total de instrucciones de warp completadas")
     parser.add_argument("--memory-size", type=lambda x: int(x, 0), default=32 * 1024 * 1024)
-    parser.add_argument("--num-warps", type=int, default=8)
-    parser.add_argument("--warp-size", type=int, default=None)
+    parser.add_argument("--num-warps", type=int, default=8, help="warps (por defecto 8)")
+    parser.add_argument("--warp-size", type=int, default=None,
+                        help="lanes por warp (por defecto 8, o el warp_size de --config)")
     parser.add_argument("--simt-region-depth", type=int, default=MAX_SIMT_REGIONS,
                         help="capacidad de la pila de regiones por warp (por defecto: 8)")
     parser.add_argument("--simt-path-depth", type=int, default=MAX_SIMT_PATHS,

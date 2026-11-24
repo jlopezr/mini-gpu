@@ -23,14 +23,13 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     show = commands.add_parser("show", help="explica una identidad y sus relaciones")
     show.add_argument("identity", help="identidad semántica, por ejemplo REQ-001")
-    show.add_argument("--format", choices=("text", "json"), default="text")
+    show.add_argument("--json", action="store_true", help="salida en JSON")
     show.add_argument("--root", type=Path, help="raíz del repositorio")
     show.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     impact = commands.add_parser("impact", help="explica qué identidades quedan afectadas")
     impact.add_argument("target", help="identidad o ruta de un recurso, incluso borrado")
     impact.add_argument("--depth", type=int, help="profundidad máxima del recorrido")
-    impact.add_argument("--json", action="store_true", help="alias compatible de --format json")
-    impact.add_argument("--format", choices=("text", "json"), default="text")
+    impact.add_argument("--json", action="store_true", help="salida en JSON")
     impact.add_argument("--root", type=Path, help="raíz del repositorio")
     impact.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
     coverage = commands.add_parser("coverage", help="muestra qué ficheros aún no declaran ninguna identidad")
@@ -81,13 +80,14 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _query_options(command) -> None:
-    command.add_argument("--format", choices=("text", "json"), default="text")
+    command.add_argument("--json", action="store_true", help="salida en JSON")
     command.add_argument("--root", type=Path, help="raíz del repositorio")
     command.add_argument("--no-cache", action="store_true", help="ignora y no actualiza la caché")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    args.format = "json" if getattr(args, "json", False) else "text"
     try:
         root = args.root.resolve() if args.root else find_repo_root(Path.cwd())
         paths = args.paths or None if args.command == "check" else None
@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "show":
         return show_identity(root, Graph(model), args.identity, args.format)
     if args.command == "impact":
-        return show_impact(root, model, args.target, args.depth, args.json or args.format == "json")
+        return show_impact(root, model, args.target, args.depth, args.json)
     if args.command in {"list", "incoming", "outgoing", "tree", "path", "query", "rule"}:
         graph = Graph(model)
         if graph.resolution.diagnostics:

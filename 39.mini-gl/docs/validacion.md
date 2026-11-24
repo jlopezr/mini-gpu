@@ -78,7 +78,7 @@ desde la raíz del repositorio:
 ```sh
 tools/build-c 40.mini-gl/tests/test_clear.c 40.mini-gl/src/render/3d/fragment.c \
     -I 40.mini-gl/src -I 40.mini-gl/src/render/3d \
-    --outdir 40.mini-gl/build/minigpu/3d/test_clear \
+    --output-dir 40.mini-gl/build/minigpu/3d/test_clear \
     -o 40.mini-gl/build/minigpu/3d/test_clear.bin
 tools/sim-cpu 40.mini-gl/build/minigpu/3d/test_clear.bin --run-limit 5000000
 ```

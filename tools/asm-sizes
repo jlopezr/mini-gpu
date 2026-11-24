@@ -21,7 +21,7 @@ una función. Aquí se agrupan (con `L.n` se entienden las dos):
 Uso:
     asm-sizes programa.lst
     asm-sizes programa.lst --top 15
-    asm-sizes programa.lst --datos
+    asm-sizes programa.lst --data
 """
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("listing", type=Path, help="listado .lst")
     ap.add_argument("--top", type=int, default=25, help="cuántos símbolos mostrar (25)")
     ap.add_argument("--all", action="store_true", help="mostrar todos")
-    ap.add_argument("--datos", action="store_true", help="listar también los símbolos de datos")
+    ap.add_argument("--data", action="store_true", help="listar también los símbolos de datos")
     args = ap.parse_args(argv)
 
     if not args.listing.is_file():
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {name:<8} {size:7d} B  {100 * size / image:5.1f} %  (desde {base:#x})")
     print()
     table(funcs, max(sections.get(".text", (0, 0))[1], 1), top, False)
-    if args.datos:
+    if args.data:
         print()
         table(data, max(image - sections.get(".text", (0, 0))[1], 1), top, True)
 

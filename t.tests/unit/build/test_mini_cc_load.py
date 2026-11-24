@@ -26,19 +26,39 @@ class LoadTest(unittest.TestCase):
             code = mini_cc.main(["prog.c", *args])
         return code, build, load
 
+    def test_load_sin_prototipo_es_un_error(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("--load")
+
+    def test_p_sin_load_compila_para_placa_y_no_la_toca(self):
+        code, build, load = self.run_main("-p", "36")
+        self.assertEqual(code, 0)
+        self.assertTrue(build.call_args.args[2])
+        load.assert_not_called()
+
     def test_sin_load_no_toca_la_placa(self):
         code, build, load = self.run_main()
         self.assertEqual(code, 0)
         self.assertFalse(build.call_args.args[2])        # board
         load.assert_not_called()
 
-    def test_load_compila_para_placa_y_carga_en_la_36(self):
-        _, build, load = self.run_main("--load")
+    def test_load_sin_prototipo_es_un_error(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("--load")
+
+    def test_p_sin_load_compila_para_placa_y_no_la_toca(self):
+        code, build, load = self.run_main("-p", "36")
+        self.assertEqual(code, 0)
+        self.assertTrue(build.call_args.args[2])
+        load.assert_not_called()
+
+    def test_load_compila_para_placa_y_carga_en_el_prototipo(self):
+        _, build, load = self.run_main("-p", "36", "--load")
         self.assertTrue(build.call_args.args[2])
         load.assert_called_once_with(["-p", "36", "--program", "img.bin"])
 
-    def test_load_acepta_otro_prototipo_y_no_run(self):
-        _, _, load = self.run_main("--load", "37", "--no-run")
+    def test_load_acepta_no_run(self):
+        _, _, load = self.run_main("-p", "37", "--load", "--no-run")
         load.assert_called_once_with(["-p", "37", "--program", "img.bin", "--no-run"])
 
 

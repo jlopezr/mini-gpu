@@ -11,10 +11,10 @@ mini-dbg --gpu t.tests/cases-cpu-gpu/race/cube/cube.asm --window
 
 `race/cube/cube.c` es el demo completo en C: texturas, matriz y caras, anfitrión de vídeo con doble
 buffer, método que toca cada 60 fotogramas y gráfica de tiempos. Se compila para la placa 36 con
-`--board` (runtime con `RUN` y `bench_now()` con los ciclos de CPU reales):
+`-p 36` (runtime con `RUN` y `bench_now()` con los ciclos de CPU reales):
 
 ```text
-mini-cc t.tests/cases-cpu-gpu/race/cube/cube.c --board        # -> _build/c/cube_board.bin
+mini-cc t.tests/cases-cpu-gpu/race/cube/cube.c -p 36        # -> _build/c/cube_board.bin
 run-board --prototype 36 --program _build/c/cube_board.bin
 ```
 

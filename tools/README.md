@@ -3,6 +3,8 @@
 Infraestructura común del repositorio: lanzadores que funcionan desde cualquier
 directorio una vez `tools/` está en el `PATH`, y que reutilizan la lógica que ya
 vive en cada prototipo (simuladores, backends de placa) en vez de duplicarla.
+Para un mapa de todas las herramientas por tema, con sus argumentos, ver
+[docs/herramientas.md](../docs/herramientas.md).
 `build`/`build-sweep`/`prototype-report` son genéricos: no dependen de qué
 prototipo es, solo de en qué carpeta corren.
 
@@ -143,7 +145,7 @@ y ownership estructural. Los comandos de consulta usan esos mismos índices:
 
 ```bash
 $ trace list --type specification
-$ trace list --kind capability --format json
+$ trace list --kind capability --json
 $ trace incoming SPEC-DEVICE#identity-register --relation implements
 $ trace outgoing IMPL-DEVICE-PROBE --relation implements
 $ trace tree SPEC-DEVICE
@@ -154,7 +156,7 @@ $ trace path VER-DEVICE-IDENTITY::identity-read IMPL-DEVICE-PROBE::read-identity
 `path` recorre relaciones explícitas en ambos sentidos y devuelve el camino más
 corto, indicando en cada salto si utilizó la dirección canónica o su vista
 inversa. `show`, `list`, `incoming`, `outgoing`, `tree`, `path` e `impact`
-aceptan `--format text|json`; `impact --json` se conserva como alias.
+aceptan `--json` para salir en JSON por stdout.
 
 ### Queries Python
 
@@ -182,7 +184,7 @@ $ trace query unverified
 $ trace query not-fully-verified
 $ trace query unsatisfied
 $ trace query implementations-of SPEC-DEVICE#identity-register
-$ trace query verifications-of SPEC-DEVICE#identity-register --format json
+$ trace query verifications-of SPEC-DEVICE#identity-register --json
 ```
 
 `unverified` significa que no existe ninguna relación entrante `verifies`.
@@ -307,6 +309,15 @@ son adaptadores finos que reenvían tal cual a python (`@args`); no hay lógica
 propia en PowerShell en ninguno, así que las opciones son siempre las del
 script Python correspondiente: `--prototype`/`-p`, doble guion.
 
+Hay tres excepciones por plataforma, todas dependientes de herramientas que solo
+existen en un sistema: `build-diamond` y `module-diagram` son solo `.ps1`
+(Diamond y la ruta de `netlistsvg` son de Windows), y `get-documents` también.
+`build-vlink` tiene las dos formas.
+
+El inventario completo de herramientas, con sus argumentos, las inconsistencias
+conocidas y las propuestas de unificación está en
+[../docs/herramientas.md](../docs/herramientas.md).
+
 ## Resolver un prototipo
 
 Los comandos Python que aceptan `--prototype` también aceptan `-p` (equivalen
@@ -380,7 +391,7 @@ y da el tamaño de cada función y de cada dato, con el reparto por sección:
 
 ```text
 > mini-asm v.tui/_build/tui_mini.s --listing tui_mini.lst -o tui_mini.bin
-> asm-sizes tui_mini.lst --top 15 --datos
+> asm-sizes tui_mini.lst --top 15 --data
 ```
 
 Solo necesita el `.lst`. Si es de un `mini-asm` anterior a esos bloques, lo
@@ -972,7 +983,7 @@ tiempos individuales no se solapen:
 .\tools\test-timings.ps1 --prototype 30 --prototype 29     # RTL CPU y GPU
 .\tools\test-timings.ps1 --prototype 30 --cpu-prototype 30 --gpu-prototype 29
 .\tools\test-timings.ps1 --skip-hardware                    # no detectar ni modificar la placa
-.\tools\test-timings.ps1 --full --json reports/test-timings.json
+.\tools\test-timings.ps1 --full --output-json reports/test-timings.json
 ```
 
 Por defecto detecta un único FTDI: si está conectado, elige el prototipo
@@ -1049,10 +1060,10 @@ Para un programa con CPU y kernels de GPU en C, `mini-cc` encadena `mini-lcc`, `
 ```bash
 $ mini-cc programa.c                          # -> _build/c/programa.bin (simulador); sin GPU
 $ mini-cc programa.c runtime/src/gpu.c runtime/src/gpu_runtime.inc runtime/src/bench.inc   # con el runtime de la GPU
-$ mini-cc programa.c ... --board              # -> _build/c/programa_board.bin (placa 36)
-$ mini-cc programa.c ... --load               # compila con --board y lo sube a la 36 (como board-load)
-$ mini-cc programa.c ... --load 37 --no-run  # a la 37, sin arrancarlo
-$ mini-cc programa.c ... --outdir out -I inc --data tex=tex.bin
+$ mini-cc programa.c ... -p 36                # -> _build/c/programa_board.bin (para la placa 36)
+$ mini-cc programa.c ... -p 36 --load        # compila para la 36 y lo sube (como board-load)
+$ mini-cc programa.c ... -p 37 --load --no-run  # a la 37, sin arrancarlo
+$ mini-cc programa.c ... --output-dir out -I inc --data tex=tex.bin
 $ mini-cc test.c biblioteca.c                # varias unidades: la primera lleva main y da el nombre
 ```
 
@@ -1066,12 +1077,12 @@ usan `tools/c-program.mk` lo pasan con `$(GPU_RUNTIME)`. Un programa que no lanz
 también se pide. Las cabeceras `gpu.h`, `mmio.h` y `string.h` de `runtime/include` entran siempre en el `-I`; `-D NOMBRE[=VALOR]`
 define una macro en todas las unidades.
 
-- **`--board`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
+- **`-p PROTOTIPO`** hace `.define BOARD` en el `.asm` generado: lanzar la GPU con `RUN` (la 36 no tiene `WARP_START`) y
   `bench_now()` con los ciclos reales de CPU. La salida se llama `<nombre>_board.bin`.
 - **`--data ETIQUETA=FICHERO`** (repetible): pega un binario tras el código con `.incbin`. El C lo declara con
   `extern unsigned etiqueta[]` y puede obtener su tamaño con `etiqueta_end - etiqueta` (donde `etiqueta_end`
   es también `extern unsigned[]`). `mini-cc` no ejecuta generadores: los datos los prepara quien llama.
-- **`--outdir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
+- **`--output-dir DIR`**: dónde dejar los intermedios (`.s`, `.opt.s`, `.asm`, `.bin`, `.hex`). Por defecto, `_build/c/`
   en la raíz del repo, que git ignora. **`-I DIR`** (repetible): cabeceras propias, además de `runtime/include`.
 - La lógica es `tools/mini_cc.py` (`build()`, `wrapper_path()`), que usan los tests de la 32 y los `compare*.py`.
 
@@ -1475,7 +1486,7 @@ OK
 
 $ test --prototype 6 --quick          # solo fixtures + tests Python, sin apio test
 $ test --prototype 21 --lint          # añade apio lint
-$ test --prototype 22 --full          # incluye los bancos lentos (alias: --slow)
+$ test --prototype 22 --full          # incluye los bancos lentos
 $ test --prototype 17 --background    # se sigue con build-status/build-log, igual que build
 ```
 
@@ -1491,7 +1502,7 @@ sale en `OK` en vez de fingir que probó algo.
 ### Bancos lentos (`TEST-LENTO`)
 
 Un banco que lleve `TEST-LENTO` en un comentario queda **fuera de la pasada
-normal**; `--full` (o `--slow`) lo mete de vuelta. Sirve para los bancos que
+normal**; `--full` lo mete de vuelta. Sirve para los bancos que
 simulan una carga realista entera y cuestan minutos: hoy solo
 `22.fpga-gpu-bl8/gpu_plasma_tb.v`, con 463 s, la mitad de la suite del
 prototipo.
@@ -1603,7 +1614,7 @@ del propio `scons.params` archivado — no asume qué FPGA es:
 ```bash
 $ build --prototype 17 --label base
 $ build-sweep --prototype 17 --seeds 1 2 3 4 5     # usa el último build archivado
-$ build-sweep --prototype 17 --seeds 1 2 3 --report-dir 17.fpga-gpu-ram-v2/reports/20260915-001203-base
+$ build-sweep --prototype 17 --seeds 1 2 3 --build-dir 17.fpga-gpu-ram-v2/reports/20260915-001203-base
 $ build-sweep --prototype 17 --seeds 1 2 3 4 5 --background   # se sigue con build-status/build-log
 ```
 
@@ -2184,7 +2195,7 @@ defecto, con `--rebuild`/`--no-upload`/`-y`. `board-load` **no comprueba la
 identidad del bitstream** — asume que ya es el correcto y va directo a
 ensamblar/cargar/ejecutar; combínalo con `board-upload` si no estás seguro.
 
-**Subir un build archivado (`board-upload --bitstream`).** `board-upload` normal
+**Subir un build archivado (`board-upload -b`, `-t`).** `-b/--bitstream RUTA` y `-t/--toolchain apio|diamond` valen igual en `board-upload`, `run-board`, `test-board`, `test-all` (solo `-t`) y `phase-sweep` (repetibles). `board-upload` normal
 programa `_build/default/hardware.bit`, que es el del *último intento*, aunque
 ese intento no haya cerrado timing o haya muerto antes de generar bitstream (en
 ese caso el fichero que queda es el de un intento anterior). Para volver a un
@@ -2226,7 +2237,7 @@ que responde el monitor de ese prototipo, y el protocolo se habla con su
 `monitor.py`, que no es igual en todos (la 38 va a 250 kbaudios, la 35-37 a
 1 Mbaudio). Al acabar deja la placa en `--restore-phase`, por defecto la que tenía
 el bitstream recién programado. Los informes (JSONL, CSV, JSON y Markdown) van a
-`<prototipo>/reports/phase-sweep-<fecha>.*` salvo `--output`. Sin `--yes` no
+`<prototipo>/reports/phase-sweep-<fecha>.*` salvo `--output-prefix`. Sin `--yes` no
 programa nada; `--phases 4-16` limita el barrido, pero entonces no recomienda
 fase.
 
@@ -2282,7 +2293,7 @@ se reenvían a las dos: con casos concretos en un prototipo CPU+GPU, usa
 `--family` para no mandar un caso de CPU al backend de GPU. `test-all --family
 gpu` incluye también la GPU de la 36 y la 37.
 
-**Qué bitstream se prueba (`--bitstream`, `--toolchain`).** Sin ninguna de las dos,
+**Qué bitstream se prueba (`-b/--bitstream`, `-t/--toolchain`).** Sin ninguna de las dos,
 `test-board` prueba lo que haya en la placa, y si cree que está desfasado
 (`-y`) sube el de apio de `_build/default`, recompilando si hace falta. Para probar
 un build concreto, sea de apio o de Diamond:
@@ -2357,6 +2368,7 @@ columna Estado, con lo ya ejecutado en la matriz: antes salía como `OK` con med
 informe.
 
 ```bash
+$ test-all --yes                       # CPU y GPU (por defecto, como bench-all y test-board)
 $ test-all --family gpu --yes          # 12, 14, 22, 29 y la GPU de la 36 y la 37
 $ test-all --family cpu --yes
 $ test-all -p 22 -p 29 --yes           # solo esos
@@ -2424,14 +2436,14 @@ El camino contrario a `frame-to-image.py`: entra un JPG/PNG/BMP y sale el
 
 ```bash
 $ image-to-framebuffer foto.jpg foto_fb.bin                       # 153600 bytes en 0x01000000
-$ image-to-framebuffer foto.jpg foto_fb.bin --ajuste encajar --fondo 0,0,64
+$ image-to-framebuffer foto.jpg foto_fb.bin --fit fit --background-color 0,0,64
 $ image-to-framebuffer foto.jpg foto_fb.bin --upload --prototype 22
 ```
 
 El framebuffer es de 320x240 y el scanout duplica cada píxel, así que lo que
 entra sin deformarse es **4:3** (640x480, 1024x768...). Para el resto está
-`--ajuste`: `recortar` (por defecto, llena y recorta el lado largo),
-`encajar` (imagen entera con bandas de `--fondo`) y `estirar`.
+`--fit`: `crop` (por defecto, llena y recorta el lado largo),
+`fit` (imagen entera con bandas de `--background-color`) y `stretch`.
 
 Con `--upload --prototype N` no se queda en un fichero: resetea el núcleo,
 escribe el framebuffer en SDRAM (~2 min a 250 kbaud), apunta `FB_FRONT` y
@@ -2450,13 +2462,27 @@ cosa que entienda Pillow vía `frame-to-image.py`):
 
 ```bash
 $ capture-frame-sim cases-cpu/video/bounce/bounce.asm --swap 20 frame.png
-$ capture-frame-sim cases-cpu/video/band/band.asm --instrucciones 500000 frame.bin
+$ capture-frame-sim cases-cpu/video/band/band.asm --instructions 500000 frame.bin
 ```
 
 `--swap N` para en el N-ésimo intercambio completado desde el arranque.
-`--instrucciones N` ejecuta N instrucciones sin condición de parada y captura
+`--instructions N` ejecuta N instrucciones sin condición de parada y captura
 en el intercambio que ocurra después — útil para mirar el framebuffer en un
 punto cualquiera del programa sin saber a qué intercambio corresponde.
+
+## Otras herramientas
+
+| Herramienta | Para qué sirve |
+|---|---|
+| `setup` (`setup.ps1`) | Instala `requirements.txt` con el Python activo y, si hay `uv`, PyPy para el simulador (de 4 a 10 veces más rápido que CPython). No toma argumentos. Queda pendiente `apio install` para sintetizar. |
+| `mini-dis programa.bin` | Desensamblador de MiniISA (`1.isa/asm2/mini-dis.py`). Opciones: `-f/--format`, `--start-pc`, `--no-addresses`, `--no-words`. |
+| `generate-sysid [--check]` | Regenera el identificador de sistema; con `--check` solo falla si está desfasado (igual que `generate-mmio` y `generate-docs`). |
+| `build-compare [-p N ...]` | Compara el último build de apio y el de Diamond de cada prototipo, una fila por prototipo y herramienta (Fmax por reloj, recursos). `*` marca un informe hecho con fuentes distintas de las actuales. |
+| `build-diamond -p N` (solo `.ps1`) | Sintetiza un prototipo con Diamond (Synplify o LSE) y archiva el informe. `--tcl-only` genera `build.tcl` sin lanzarlo. Necesita Diamond instalado. |
+| `check-links.py` | Comprueba que todos los enlaces relativos de los `.md` apuntan a algo que existe; devuelve 1 si hay alguno roto. Sin argumentos de `argparse`. |
+| `compare-frames.py expected actual` | Compara dos framebuffers (PPM o RGB565 de 320x240) y, si difieren, escribe un PPM con los píxeles malos en magenta. Opciones: `--rgb565`, `--tolerance`, `--diff`, `--max-listed`. |
+| `get-documents.ps1` | Lista los `.md` del repo (sin `.venv`, `y.lcc` ni `x.tests`). Solo Windows. |
+| `module-diagram.ps1` | SVG de un módulo Verilog con yosys + netlistsvg; `-Inside` dibuja el top con sus submódulos. Experimental, fuera del sistema de lanzadores. Solo Windows. |
 
 ## Qué no hay todavía
 

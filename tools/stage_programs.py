@@ -83,7 +83,7 @@ def stage(prototipo: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    parser.add_argument("--prototype", required=True)
+    parser.add_argument("-p", "--prototype", required=True)
     args = parser.parse_args()
     from tools.prototype import resolve_prototype
     return stage(resolve_prototype(args.prototype, root=ROOT))

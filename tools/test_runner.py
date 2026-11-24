@@ -160,22 +160,27 @@ def run_step(name: str, command: list[str], cwd: Path) -> int:
     return completed.returncode
 
 
+AUTO_JOBS = 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-p", "--prototype", required=True)
     parser.add_argument("--quick", action="store_true", help="solo fixtures + tests Python, sin apio test")
-    parser.add_argument("--full", "--slow", dest="full", action="store_true",
+    parser.add_argument("--full", dest="full", action="store_true",
                         help="incluye los bancos marcados TEST-LENTO (por defecto se omiten)")
     parser.add_argument("--lint", action="store_true", help="añade apio lint")
     parser.add_argument("--lint-only", action="store_true",
                         help="solo apio lint: sin fixtures, tests Python ni regresión RTL")
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--jobs", type=int, default=2,
+    parser.add_argument("-j", "--jobs", type=int, default=0, metavar="N",
                         help="grupos de bancos RTL en paralelo, cada uno en su copia de la carpeta "
-                             "(por defecto 2; 1 = una sola invocacion de apio, como antes)")
+                             "(0 = automático, ahora 2; 1 = una sola invocacion de apio, como antes)")
     args = parser.parse_args(argv)
-    if args.jobs < 1:
-        parser.error("--jobs tiene que ser al menos 1")
+    if args.jobs < 0:
+        parser.error("--jobs no puede ser negativo")
+    if args.jobs == 0:
+        args.jobs = AUTO_JOBS
     if args.lint_only:
         args.lint = True
 

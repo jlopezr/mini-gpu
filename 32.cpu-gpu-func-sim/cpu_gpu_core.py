@@ -651,8 +651,8 @@ class _LinePrefix:
 class _GatedTrace(TextTrace):
     """El `TextTrace` de 11, pero cada línea pide sitio al contador común del sistema."""
 
-    def __init__(self, stream, system: "CpuGpuSystem"):
-        super().__init__(stream)
+    def __init__(self, stream, system: "CpuGpuSystem", detail: bool = False):
+        super().__init__(stream, detail=detail)
         self.system = system
 
     def __call__(self, event) -> None:
@@ -764,18 +764,19 @@ class CpuGpuSystem(MachineHooks):
         self.gpu.hard_reset()
         self.cpu_instructions = 0
 
-    def enable_trace(self, stream, limit: int | None = None) -> None:
+    def enable_trace(self, stream, limit: int | None = None, detail: bool = False) -> None:
         """Traza intercalada: «CPU» delante de cada instrucción de CPU, «GPU» de cada de warp.
 
         `limit` son líneas de traza, de CPU y de warp juntas. Solo limita lo que
-        se imprime: la ejecución sigue hasta el final.
+        se imprime: la ejecución sigue hasta el final. Con `detail`, cada línea de warp
+        lleva también los registros y la memoria por hilo (como `sim-gpu --trace-detail`).
         """
         if limit is not None and limit < 0:
             raise ValueError("trace-limit no puede ser negativo")
         self.trace_stream = stream
         self.trace_limit = limit
         self.trace_lines = 0
-        self.trace = _GatedTrace(_LinePrefix(stream, "GPU     "), self)
+        self.trace = _GatedTrace(_LinePrefix(stream, "GPU     "), self, detail)
         self._attach_gpu_events()
 
     def enable_profile(self, profile, after_swaps: int = 0) -> None:

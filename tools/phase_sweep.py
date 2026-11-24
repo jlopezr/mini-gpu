@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import serial
+from tools.cli_common import add_bitstream, add_port, add_serial_timeout, add_toolchain, add_yes
 from tools.prototype import PrototypeResolutionError, resolve_prototype
 from tools.run_board import load_monitor
 from tools.mmio_map import MMIO_SDRAM_PHASES as PHASES
@@ -222,12 +223,16 @@ def reports(base: Path, rows: list[dict], items: list[Bitstream], args) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="phase-sweep", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--bitstream", action="append", type=bitstream_arg, required=True,
-                        help="repetible: [NOMBRE=]RUTA al hardware.bit o a su carpeta de reports/")
+    add_bitstream(parser, repeatable=True, type=bitstream_arg, metavar="[NOMBRE=]RUTA",
+                  help="repetible: [NOMBRE=]RUTA al hardware.bit o a su carpeta de reports/")
+    add_toolchain(parser, repeatable=True,
+                  help="repetible: añade el último build archivado de esa herramienta (fuentes "
+                       "actuales) de --prototype, con el nombre de la herramienta; permite "
+                       "comparar apio y diamond sin escribir rutas")
     parser.add_argument("-p", "--prototype",
                         help="prototipo de los bitstreams que no esten dentro de una carpeta de prototipo")
-    parser.add_argument("--port")
-    parser.add_argument("--output", type=Path,
+    add_port(parser)
+    parser.add_argument("--output-prefix", type=Path,
                         help="base de los informes (sin extension); por defecto "
                              "<prototipo>/reports/phase-sweep-<fecha> del primer bitstream")
     parser.add_argument("--address", type=lambda x: int(x, 0), default=0x0010_0000)
@@ -238,11 +243,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--restore-phase", type=int,
                         help="fase en la que se deja la placa al acabar (por defecto, la que "
                              "tenia el bitstream recien programado: la que lleva de fabrica)")
-    parser.add_argument("--serial-timeout", type=float, default=2.0)
-    parser.add_argument("--yes", action="store_true")
+    add_serial_timeout(parser)
+    add_yes(parser, "programa la placa sin preguntar")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
+    args.bitstream = list(args.bitstream or [])
+    if args.toolchain:
+        if not args.prototype:
+            parser.error("--toolchain necesita --prototype")
+        from tools import board_record
+        try:
+            project = resolve_prototype(args.prototype, ROOT)
+        except PrototypeResolutionError as error:
+            parser.error(str(error))
+        for toolchain in dict.fromkeys(args.toolchain):
+            folder, reason = board_record.find_latest_build(project, toolchain)
+            if folder is None:
+                parser.error(f"--toolchain {toolchain}: {reason}")
+            args.bitstream.append(Bitstream(toolchain, (folder / "hardware.bit").resolve()))
+    if not args.bitstream:
+        parser.error("hace falta al menos un -b/--bitstream o -t/--toolchain")
     if args.length <= 0 or args.repetitions <= 0:
         parser.error("--length y --repetitions deben ser positivos")
     if args.restore_phase is not None and not 0 <= args.restore_phase < PHASES:
@@ -266,9 +287,9 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"{item.path} no esta dentro de una carpeta de prototipo: usa --prototype")
         items.append(Bitstream(item.label, item.path, prototype))
     args.bitstream = items
-    if args.output is None:
+    if args.output_prefix is None:
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        args.output = items[0].prototype / "reports" / f"phase-sweep-{stamp}"
+        args.output_prefix = items[0].prototype / "reports" / f"phase-sweep-{stamp}"
 
     port = args.port or ("AUTO" if args.dry_run else detect_port())
     print(f"Puerto: {port}")
@@ -276,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
           f"{args.length} bytes por patron")
     for item in args.bitstream:
         print(f"  {item.label} ({item.prototype.name}): {item.path}")
-    print(f"Informes: {args.output}.*")
+    print(f"Informes: {args.output_prefix}.*")
     if args.dry_run:
         print("DRY-RUN: no se programa ni se abre el puerto serie")
         return 0
@@ -284,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("falta --yes; no se programara la placa")
 
     rows = []
-    partial = args.output.with_suffix(".partial.jsonl")
+    partial = args.output_prefix.with_suffix(".partial.jsonl")
     partial.parent.mkdir(parents=True, exist_ok=True)
     with partial.open("w", encoding="utf-8") as raw:
         for item in args.bitstream:
@@ -345,10 +366,10 @@ def main(argv: list[str] | None = None) -> int:
                 finally:
                     restore(client, restore_to)
 
-    reports(args.output, rows, args.bitstream, args)
+    reports(args.output_prefix, rows, args.bitstream, args)
     partial.unlink(missing_ok=True)
-    print(f"Informes: {args.output.with_suffix('.json')}, "
-          f"{args.output.with_suffix('.csv')}, {args.output.with_suffix('.md')}")
+    print(f"Informes: {args.output_prefix.with_suffix('.json')}, "
+          f"{args.output_prefix.with_suffix('.csv')}, {args.output_prefix.with_suffix('.md')}")
     return 0
 
 

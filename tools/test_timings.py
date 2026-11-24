@@ -192,7 +192,7 @@ def x_suite(python: str, backend: str, temp: Path, prototype: str | None,
             port: str | None = None) -> dict:
     output = temp / f"{backend}.json"
     command = [python, str(ROOT / "t.tests" / "run_tests.py"), "--backend", backend,
-               "--jobs", str(jobs), "--timings-json", str(output)]
+               "--jobs", str(jobs), "--output-timings-json", str(output)]
     if prototype:
         command += ["--prototype", prototype, "--yes" if upload else "--no-upload"]
     if port:
@@ -248,7 +248,7 @@ def markdown(suites: list[dict], started: str, command: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prototype", action="append",
+    parser.add_argument("-p", "--prototype", action="append",
                         help="prototipo para bancos RTL; repetible (CPU y GPU más nuevas si se omite)")
     parser.add_argument("--cpu-prototype", help="añade t.tests en una placa CPU (sin cargar bitstream)")
     parser.add_argument("--gpu-prototype", help="añade t.tests en una placa GPU (sin cargar bitstream)")
@@ -256,8 +256,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="no detecta ni modifica la placa")
     parser.add_argument("--cases", action="append", default=[], metavar="RUTA",
                         help="limita los casos t.tests; se puede repetir")
-    parser.add_argument("--jobs", type=int, default=1,
-                        help="procesos para t.tests (1 da tiempos y total comparables)")
+    parser.add_argument("-j", "--jobs", type=int, default=1, metavar="N",
+                        help="procesos para t.tests (0 = automático; 1, el valor por defecto, da "
+                             "tiempos y total comparables)")
     parser.add_argument("--full", action="store_true", help="incluye bancos RTL TEST-LENTO")
     parser.add_argument("--full-x-tests", action="store_true",
                         help="incluye en los simuladores GPU los casos marcados slow")
@@ -267,14 +268,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true", help="oculta la salida de cada subproceso")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--output", type=Path, default=ROOT / "reports" / "test-timings.md")
-    parser.add_argument("--json", type=Path, help="guarda además los datos sin formato")
+    parser.add_argument("--output-json", type=Path, help="guarda además los datos sin formato")
     parser.add_argument("--python-worker", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--worker-output", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.python_worker:
         return python_worker(args.python_worker, "test_*.py", args.worker_output, args.verbose)
-    if args.jobs < 1:
-        parser.error("--jobs debe ser al menos 1")
+    if args.jobs < 0:
+        parser.error("--jobs no puede ser negativo")
     if args.skip_hardware and (args.cpu_prototype or args.gpu_prototype):
         parser.error("--skip-hardware no se combina con --cpu-prototype/--gpu-prototype")
     python = str(ROOT / ".venv" / "Scripts" / "python.exe")
@@ -325,9 +326,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(markdown(suites, started, " ".join(sys.argv)), encoding="utf-8")
-    if args.json:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(json.dumps({"generated": started, "suites": suites}, indent=2) + "\n", encoding="utf-8")
+    if args.output_json:
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(json.dumps({"generated": started, "suites": suites}, indent=2) + "\n", encoding="utf-8")
     print(f"Informe: {args.output}")
     return 1 if any(s.get("exit_code", 1) != 0 for s in suites) else 0
 

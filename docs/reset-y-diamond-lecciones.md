@@ -133,9 +133,9 @@ la 37 tiene una entrada `soft_reset` propia, porque allí `RESET` conserva los d
 ### 4.3 Dos modos de lanzar la GPU
 
 - **Hito 2 (37):** `WARP_START` lanza warps sueltos; `RESET` conserva los descriptores.
-- **Hito 1 (36):** no hay `WARP_START`; se lanza con `RUN` y la imagen debe compilarse con `--board`.
+- **Hito 1 (36):** no hay `WARP_START`; se lanza con `RUN` y la imagen debe compilarse con `-p 36`.
 
-Los casos de C compilan sin `--board`, así que usan `WARP_START`. En la 36 el lanzamiento fallaba y
+Los casos de C compilan sin `-p`, así que usan `WARP_START`. En la 36 el lanzamiento fallaba y
 `GPU_RUN` devolvía `GPU_ERR_STATE` (4). **Ojo:** ese 4 es un código del runtime
 (`GPU_ERR_STATE`), no `ERROR_DIVISION_BY_ZERO` de la GPU; son numeraciones distintas. Una instrucción
 inexistente da `ERROR_INVALID_OPCODE` (1) o `ERROR_INVALID_ENCODING` (5), no un fallo de resultado.
@@ -291,6 +291,6 @@ que ya es la 35 sin GPU.
 2. **22:** mismo patrón en `gpu_lsu2` y misma fábrica, validada 70/70 y sin tocar. Reproducir antes de arreglar.
 3. **34:** decidir entre portar la arquitectura de 35–38 o dejarla como no validada en la placa (sección 4.6).
 4. **`apio build` falla** desde el 8 de noviembre dentro de yosys, también en el 6. Causa sin aclarar.
-5. Que el runner use la imagen `--board` en la 36 para ejecutar los 10 casos que hoy omite.
+5. Que el runner use la imagen de placa (`-p 36`) en la 36 para ejecutar los 10 casos que hoy omite.
 6. El origen del fantasma del bridge y la causa exacta, dentro de Synplify, del reset ineficaz.
 7. 16 y 30 siguen con `reset_shift` y no con `reset_sync` por dominio.

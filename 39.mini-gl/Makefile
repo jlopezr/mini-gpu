@@ -257,10 +257,10 @@ $(SKETCHES3D:%=sdl-%): sdl-%: build/%-sdl
 
 # El driver minigpu.c va primero porque lleva main.
 $(MG)/%.bin: examples/%.c src/platform/minigpu.c $(MINIGPU_SRCS) $(HDRS) $(LIBC_DEPS)
-	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU_SRCS) $(LIBC) $(INCLUDES) -D MGL_VERSION=$(MV) --outdir $(MG)/$* -o $@
+	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU_SRCS) $(LIBC) $(INCLUDES) -D MGL_VERSION=$(MV) --output-dir $(MG)/$* -o $@
 # 3D: el renderer de referencia en la CPU de MiniGPU, con las mismas fuentes que en el host.
 $(MG3)/%.bin: examples/%.c src/platform/minigpu.c $(MINIGPU3D_SRCS) $(HDRS) $(LIBC_DEPS)
-	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU3D_SRCS) $(LIBC) $(INCLUDES) $(MG3_DEFS) --outdir $(MG3)/$* -o $@
+	$(BUILD_C) src/platform/minigpu.c $< $(MINIGPU3D_SRCS) $(LIBC) $(INCLUDES) $(MG3_DEFS) --output-dir $(MG3)/$* -o $@
 
 # Las mismas tres órdenes para 2D ($(MG)) y 3D ($(MG3)); $(1) es la carpeta.
 # Ventana del simulador. Cada frame son millones de instrucciones.

@@ -189,8 +189,13 @@ class ParallelRtlTest(RunnerBase):
         self._main(["--jobs", "2"])
         self.assertEqual((self.prototype_dir / "cpu.v").read_text(encoding="utf-8"), "// original")
 
-    def test_jobs_menor_que_uno_es_un_error(self):
+    def test_jobs_negativo_es_un_error(self):
         with self.assertRaises(SystemExit):
+            test_runner.main(["--prototype", "6", "--jobs", "-1"])
+
+    def test_jobs_cero_es_automatico(self):
+        with mock.patch.object(test_runner, "find_repo_root", side_effect=RuntimeError("alto")), \
+                self.assertRaises(RuntimeError):
             test_runner.main(["--prototype", "6", "--jobs", "0"])
 
 

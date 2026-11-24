@@ -202,7 +202,7 @@ Analizar impacto:
 Casi todos admiten:
 
 ```powershell
---format json
+--json
 ```
 
 ## 8. Ejecutar queries

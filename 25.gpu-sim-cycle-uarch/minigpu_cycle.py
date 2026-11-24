@@ -357,19 +357,19 @@ def main():
     # ------------------------------------------------------------------
 
     parser.add_argument(
-        "--num-warps", "--warps",
+        "--num-warps",
         dest="num_warps",
         type=int,
         default=8,
-        help="number of warps (alias: --warps)",
+        help="warps (por defecto 8)",
     )
 
     parser.add_argument(
-        "--warp-size", "--lanes",
+        "--warp-size",
         dest="warp_size",
         type=int,
         default=8,
-        help="lanes per warp (alias: --lanes)",
+        help="lanes por warp (por defecto 8)",
     )
 
     parser.add_argument(
@@ -394,7 +394,7 @@ def main():
     )
 
     parser.add_argument(
-        "--dump", "--dump-memory",
+        "--dump",
         dest="dump_memory",
         nargs=3,
         metavar=("ADDRESS", "SIZE", "FILE"),

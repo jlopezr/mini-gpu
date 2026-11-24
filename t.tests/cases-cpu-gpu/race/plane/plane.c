@@ -2,7 +2,7 @@
  * inocente y GPU buena, con el anfitrion de cube.c (video con doble buffer, metodo que toca, grafica)
  *
  *   python t.tests/cases-cpu-gpu/race/plane/plane_tex.py -o _build/c/plane_tex.bin
- *   mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c --board --data plane_tex=_build/c/plane_tex.bin
+ *   mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c -p 36 --data plane_tex=_build/c/plane_tex.bin
  *   run-board --prototype 36 --program _build/c/plane_board.bin
  *   mini-cc t.tests/cases-cpu-gpu/race/plane/plane.c --data plane_tex=_build/c/plane_tex.bin   # simulador
  *

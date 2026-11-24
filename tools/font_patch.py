@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.cli_common import add_prototype
 from tools.prototype import (PrototypeResolutionError, ToolchainError,
                              find_toolchain_binary, oss_cad_suite_env,
                              resolve_prototype)
@@ -163,7 +164,7 @@ def upload(bitstream: Path, project: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Cambia la fuente de la consola en el bitstream construido, sin resintetizar.")
-    parser.add_argument("-p", "--prototype", required=True)
+    add_prototype(parser, required=True)
     parser.add_argument("font", help="nombre en fonts/ (pc, cpc464...) o ruta a un .hex")
     parser.add_argument("--upload", action="store_true", help="programa la placa (SRAM)")
     args = parser.parse_args(argv)
