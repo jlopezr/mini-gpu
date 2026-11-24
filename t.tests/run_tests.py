@@ -837,6 +837,31 @@ def build_case_artifacts(raw: dict, directory: Path) -> None:
         )
 
 
+def skip_reason_before_build(raw: dict, architecture: str, backend_names, backend_versions) -> str | None:
+    """Por qué un caso no cabe en estos backends, mirando solo lo que se sabe sin construirlo.
+
+    `load_case` ejecuta el build del caso (`make case`...) antes de abrir sus artefactos, y no
+    tiene sentido compilar lo que luego se va a omitir por capacidades: tarda, y falla si falta
+    `make` aunque el caso nunca fuera a correr. Aquí se llama a cada `incompatibility` con un
+    caso provisional que solo lleva `requires` y `name`. Las razones que dependen únicamente de
+    `requires` (`sin dma_device`, `atomic_warp_faults`...) salen igual que con el caso entero;
+    si el backend necesita algo más (`expect`, `run_until`...), la comprobación se aplaza al
+    caso cargado y esto devuelve None.
+    """
+    provisional = {"name": raw.get("name"), "requires": parse_requires(raw, architecture)}
+    for name in backend_names:
+        check = getattr(BACKEND_DEFINITIONS[name]["module"], "incompatibility", None)
+        if check is None:
+            continue
+        try:
+            reason = check(provisional, backend_versions[name])
+        except (KeyError, TypeError):
+            continue
+        if reason:
+            return f"[{name}]: {reason}"
+    return None
+
+
 def load_case(path: Path, architecture: str | None = None) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8"))
     directory = path.parent
@@ -1933,6 +1958,14 @@ def main() -> int:
                     continue
                 raise SelectionError(
                     "simulator_options requiere --backend sim-gpu o sim-gpu-cycle")
+            # Lo que se puede saber sin construir el caso se comprueba antes del build.
+            reason = skip_reason_before_build(raw, architecture, backend_names, backend_versions)
+            if reason:
+                if explicit:
+                    raise SelectionError(reason)
+                print(f"SKIP {raw.get('name', path)} {reason}")
+                skipped += 1
+                continue
             case = load_case(path, architecture)
             # Cada backend decide si el caso cabe en su mapa; los que no
             # publican `incompatibility` aceptan todo lo que valide load_case.
