@@ -206,7 +206,7 @@ class CapabilitiesTest(unittest.TestCase):
             expand_capabilities(["subword_memory"]), {"subword_memory"})
 
     def test_las_extensiones_se_omiten_en_los_bitstreams_anteriores(self):
-        """Y el motivo tiene que decir donde SI estan.
+        """Se omiten con un motivo que nombra la capacidad que falta.
 
         Sin el SKIP, estos casos no fallarian con un diagnostico util en un
         bitstream anterior: pararian con error 0x01, opcode invalido, que es lo
@@ -217,8 +217,7 @@ class CapabilitiesTest(unittest.TestCase):
             for version in ("ebr", "sdram", "hdmi", "bl8"):
                 motivo = fpga_cpu.incompatibility(caso, version)
                 self.assertIsNotNone(motivo, f"{capacidad} en {version}")
-                self.assertIn(capacidad, motivo)
-                self.assertIn("subword", motivo)
+                self.assertEqual(motivo, f"missing {capacidad}")
             self.assertIsNone(fpga_cpu.incompatibility(caso, "subword"))
 
     def test_el_serie_se_omite_en_los_bitstreams_anteriores(self):
@@ -313,7 +312,7 @@ class CapabilitiesTest(unittest.TestCase):
         for version in ("hdmi", "bl8"):
             motivo = fpga_cpu.incompatibility(caso, version)
             if motivo is not None:
-                self.assertNotIn("sin video", motivo)
+                self.assertNotIn("missing video", motivo)
 
     def test_captura_donde_hay_los_registros_que_la_hacen(self):
         """Se llamaba `test_captura_solo_en_la_18` y usaba la 16 de contraste.
@@ -324,8 +323,8 @@ class CapabilitiesTest(unittest.TestCase):
         la ausencia no depende de una version del contrato.
 
         Lo que el test protege no cambia: que un caso que pide capturar un
-        frame se OMITA donde no se puede capturar, y que el motivo diga donde
-        si. Un caso de captura que no se omite no falla limpio: se cuelga
+        frame se OMITA donde no se puede capturar, y que el motivo diga que falta.
+        Un caso de captura que no se omite no falla limpio: se cuelga
         esperando una parada que nadie va a provocar.
         """
         caso = self._caso(["frame_capture"])
@@ -333,10 +332,7 @@ class CapabilitiesTest(unittest.TestCase):
             motivo = fpga_cpu.incompatibility(caso, version)
             with self.subTest(version=version):
                 self.assertIsNotNone(motivo)
-                self.assertIn("frame_capture", motivo)
-                # El motivo tiene que decir donde SI esta, que es lo que uno
-                # quiere saber al leer el SKIP.
-                self.assertIn("bl8", motivo)
+                self.assertEqual(motivo, "missing frame_capture")
         # Y donde si la hay, la capacidad no puede ser el motivo.
         for version in ("hdmi", "bl8"):
             motivo = fpga_cpu.incompatibility(caso, version)

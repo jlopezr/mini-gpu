@@ -822,11 +822,12 @@ verdad implementa.
 Cada backend publica `incompatibility(case, version)`. Cuando falta algo, el
 runner imprime `SKIP` y lo cuenta **aparte de los fallos**: un caso omitido por
 no haber hardware no es un caso roto, y mezclarlos haría inútil el recuento.
-El motivo dice dónde sí está:
+El motivo es corto: nombra el backend y la capacidad que falta. Qué prototipos la tienen se
+consulta con `prototype-report` o en `tools/capabilities.json`:
 
 ```text
-SKIP video-band [sim-cpu]: el simulador no tiene frame_capture:
-    no hay barrido ni framebuffer, use --backend fpga-cpu --version bl8
+SKIP video-band [sim-cpu]: missing frame_capture
+SKIP dma-fill-copy [fpga-cpu]: missing dma_device
 ```
 
 Si el caso se pide **por ruta explícita**, en cambio, no se omite: se considera

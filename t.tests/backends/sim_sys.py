@@ -43,7 +43,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     """Qué casos no caben aquí: los que piden algo que el simulador no declara."""
     missing = missing_capabilities(case, capabilities(version))
     if missing:
-        return f"el simulador {version!r} no tiene {', '.join(missing)}"
+        return f"missing {', '.join(missing)}"
     return None
 
 

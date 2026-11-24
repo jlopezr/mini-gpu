@@ -90,22 +90,17 @@ def build_versions(
     return versions
 
 
-def missing_with_hint(case: dict, versions: dict, version: str) -> str | None:
-    """«sin X (la tienen: ...)» si al caso le falta algo, o None.
+def missing_reason(case: dict, versions: dict, version: str) -> str | None:
+    """«missing X, Y» si al caso le falta alguna capacidad en esta versión, o None.
 
-    El motivo dice qué versión sí lo tiene, que es lo que uno quiere saber
-    cuando ve el SKIP. La que falla ya sale en el prefijo `[version]` del SKIP.
+    Corto a propósito: el backend ya sale en el prefijo `[fpga-cpu]` del SKIP, y qué versiones
+    sí la tienen se ve en `tools/prototype_report.py` o en `capabilities.json`.
     """
     available = expand_for(versions[version]["capabilities"])
     missing = missing_capabilities(case, available)
     if not missing:
         return None
-    having_it = sorted(
-        name for name, config in versions.items()
-        if set(missing) <= expand_for(config["capabilities"])
-    )
-    hint = f" (la tienen: {', '.join(having_it)})" if having_it else ""
-    return f"sin {', '.join(missing)}{hint}"
+    return f"missing {', '.join(missing)}"
 
 
 def region_reason(case: dict, versions: dict, version: str, backend_name: str):

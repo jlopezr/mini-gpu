@@ -133,10 +133,10 @@ class GpuFpgaTest(unittest.TestCase):
         # accidente: sin ventana de vídeo, o sin captura de frame.
         self.assertIn('video', skipped['demo-mmio-selftest'])
         self.assertIn('perf_counters', skipped['demo-mmio-selftest'])
-        self.assertIn('sin frame_capture', skipped['demo-plasma'])
+        self.assertIn('missing frame_capture', skipped['demo-plasma'])
         # plasma-nommio pinta 320x240 en memoria: sin SDRAM, la placa pararia con
         # ERROR_MEMORY_ACCESS, que es lo que le pasaba a la 12.
-        self.assertIn('sin large_memory', skipped['demo-plasma-nommio'])
+        self.assertIn('missing large_memory', skipped['demo-plasma-nommio'])
         self.assertIn('demo-bench', accepted)
         self.assertIn('fuera del mapa de memoria', skipped['gpu-mandelbrot'])
         self.assertIn('fuera del mapa de memoria', skipped['gpu-load-out-of-bounds'])

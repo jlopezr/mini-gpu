@@ -8,7 +8,7 @@ from pathlib import Path
 from . import board, frame_capture
 from .common import capabilities_of
 from .fpga_common import (
-    REPOSITORY as _REPOSITORY, MonitorBackend, build_versions, missing_with_hint,
+    REPOSITORY as _REPOSITORY, MonitorBackend, build_versions, missing_reason,
     region_reason, write_register as _write_register,
 )
 
@@ -154,7 +154,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     El mapa lo declara el `monitor.py` de cada versión, que es quien lo
     implementa; aquí solo se lee su constante, sin abrir el puerto.
     """
-    return (missing_with_hint(case, VERSIONS, version)
+    return (missing_reason(case, VERSIONS, version)
             or region_reason(case, VERSIONS, version, "fpga-cpu"))
 
 

@@ -170,7 +170,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     available = capabilities(version)
     missing = [name for name in case.get("requires", []) if name not in available]
     if missing:
-        return f"sin {', '.join(missing)}"
+        return f"missing {', '.join(missing)}"
     # El vídeo es de la CPU: la GPU de esta carpeta no es maestro de MMIO.
     if (case.get("run_until") or case["expected"].get("video") is not None
             or case["expected"].get("frame") is not None):

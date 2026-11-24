@@ -20,7 +20,7 @@ from . import board, frame_capture
 from .common import capabilities_of, load_module as _load_module
 from .fpga_common import (
     REPOSITORY as _REPOSITORY, MonitorBackend, architectural_size, build_versions,
-    missing_with_hint, write_register as _write_register,
+    missing_reason, write_register as _write_register,
 )
 
 from tools.rtl_facts import (  # noqa: E402 (fpga_common ya puso REPOSITORY en sys.path)
@@ -109,7 +109,7 @@ def incompatibility(case: dict, version: str = DEFAULT_VERSION) -> str | None:
     # hueco no daba la cara. Con `cases-shared` si: `shared-double-buffer`
     # pide `video`, y la 12 --que no lo tiene-- lo ejecutaba hasta que la
     # placa contestaba `ff`, o sea un ERROR donde tocaba un SKIP.
-    missing = missing_with_hint(case, VERSIONS, version)
+    missing = missing_reason(case, VERSIONS, version)
     if missing:
         return missing
     # El mapa lo declara el monitor de esta versión, que es quien lo implementa.
