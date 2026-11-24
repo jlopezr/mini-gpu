@@ -5,17 +5,21 @@
 # errores en cruces que no existen en el chip. Los cruces entre dominios son asincronos por
 # diseno:
 #
-# 1) clk_25mhz_c (el reloj de la CPU en la 38: el oscilador directo, sin PLL) <-> clk_mem (CPU y video <-> SDRAM): fabric_fifo_bridge.v, que usa async_fifo.v
+# 1) clk <-> clk_mem (CPU y video <-> SDRAM): fabric_fifo_bridge.v, que usa async_fifo.v
 #    (punteros Gray con 2 FF).
 #
-# 2) clk_25mhz_c <-> clk_pix y clk_pix -> clk_pix_5x: video_scanout.v (toggles por 2 FF, banco con
+# 2) clk <-> clk_pix y clk_pix -> clk_pix_5x: video_scanout.v (toggles por 2 FF, banco con
 #    toggle) y consola; el mismo razonamiento que 30.fpga-cpu-console/diamond-constraints.txt.
 #
-# Lo que NO se bloquea es clk_25mhz_c -> clk_25mhz_c ni clk_mem -> clk_mem: son los caminos que de verdad
-# limitan la frecuencia. Mismo criterio que 36 y 37, sin el dominio de la GPU (la 38 no lo tiene).
-BLOCK PATH FROM CLKNET "clk_25mhz_c" TO CLKNET "clk_mem" ;
-BLOCK PATH FROM CLKNET "clk_mem" TO CLKNET "clk_25mhz_c" ;
-BLOCK PATH FROM CLKNET "clk_25mhz_c" TO CLKNET "clk_pix" ;
-BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_25mhz_c" ;
+# `clk` es el reloj de la CPU, de pll_cpu a 50 MHz. `clk_25mhz_c` (el oscilador) solo alimenta
+# las PLL y no tiene cruces: las restricciones copiadas de la 38 lo bloqueaban a el, y los cruces
+# reales quedaban cronometrados como sincronos (2086 transferencias clk->clk_pix, 450 y 559 con
+# clk_mem en el informe del 24 de noviembre).
+#
+# Lo que NO se bloquea es clk -> clk ni clk_mem -> clk_mem: son los caminos que de verdad
+# limitan la frecuencia. Mismo criterio que la 44, sin el dominio de la GPU.
+BLOCK PATH FROM CLKNET "clk" TO CLKNET "clk_mem" ;
+BLOCK PATH FROM CLKNET "clk_mem" TO CLKNET "clk" ;
+BLOCK PATH FROM CLKNET "clk" TO CLKNET "clk_pix" ;
+BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk" ;
 BLOCK PATH FROM CLKNET "clk_pix" TO CLKNET "clk_pix_5x" ;
-
