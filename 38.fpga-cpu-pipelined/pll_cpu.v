@@ -28,11 +28,13 @@ module pll_cpu (
       .OUTDIVIDER_MUXA("DIVA"), .OUTDIVIDER_MUXB("DIVB"),
       .OUTDIVIDER_MUXC("DIVC"), .OUTDIVIDER_MUXD("DIVD"),
       .CLKI_DIV(1), .CLKOP_ENABLE("ENABLED"), .CLKOP_DIV(12),
-      .CLKOP_CPHASE(5), .CLKOP_FPHASE(0), .FEEDBK_PATH("CLKOP"),
+      // Con realimentacion interna, la fase neutra es DIV-1. Diamond rechaza
+      // realimentar CLKOP cuando su CPHASE representa un desfase de -180 grados.
+      .CLKOP_CPHASE(11), .CLKOP_FPHASE(0), .FEEDBK_PATH("INT_OP"),
       .CLKFB_DIV(2)
   ) pll_i (
       .RST(1'b0), .STDBY(1'b0), .CLKI(clkin), .CLKOP(clkout0),
-      .CLKFB(clkout0), .PHASESEL0(1'b0),
+      .CLKFB(clkfb), .CLKINTFB(clkfb), .PHASESEL0(1'b0),
       .PHASESEL1(1'b0), .PHASEDIR(1'b1), .PHASESTEP(1'b1),
       .PHASELOADREG(1'b1), .PLLWAKESYNC(1'b0), .ENCLKOP(1'b0),
       .LOCK(locked)
