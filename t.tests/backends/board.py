@@ -311,6 +311,17 @@ def _sources_changed(project: Path) -> str | None:
 
     if bitstream_is_current(project):
         return None
+    # `_build/default` es el bitstream de apio y puede estar desfasado aunque la
+    # placa lleve otro build archivado y vigente (p. ej. uno de Diamond subido con
+    # `board-upload --bitstream`). Lo que cuenta es lo que se programó la última
+    # vez: si es de este prototipo y sus fuentes son las actuales, no hay cambios.
+    from tools.board_record import find_build, last_upload, sources_match
+
+    uploaded = last_upload()
+    if uploaded and uploaded.get("prototype") == project.name and uploaded.get("bitstream_sha256"):
+        folder = find_build(project, uploaded["bitstream_sha256"], uploaded.get("bitstream_size"))
+        if folder is not None and sources_match(project, folder) is True:
+            return None
     return (
         f"Las fuentes sintetizables de {project} han cambiado desde su último "
         f"build: la placa no tiene el diseño del RTL actual, y las capacidades "

@@ -231,9 +231,41 @@ class SourcesChangedTest(unittest.TestCase):
 
     def test_dice_como_arreglarlo(self):
         with mock.patch.object(board, "_is_ulx3s", return_value=True), \
-                mock.patch("tools.build_report.bitstream_is_current", return_value=False):
+                mock.patch("tools.build_report.bitstream_is_current", return_value=False), \
+                mock.patch("tools.board_record.last_upload", return_value=None):
             mensaje = board._sources_changed(Path("38.fpga-cpu-pipelined"))
         self.assertIn("tools/build -p 38", mensaje)
+
+    def _stale_apio(self, uploaded, folder, match):
+        return (mock.patch.object(board, "_is_ulx3s", return_value=True),
+                mock.patch("tools.build_report.bitstream_is_current", return_value=False),
+                mock.patch("tools.board_record.last_upload", return_value=uploaded),
+                mock.patch("tools.board_record.find_build", return_value=folder),
+                mock.patch("tools.board_record.sources_match", return_value=match))
+
+    def test_bitstream_archivado_vigente_en_la_placa_no_cuenta_como_cambiado(self):
+        # El de apio de _build/default esta desfasado, pero la placa lleva un build
+        # archivado (p. ej. de Diamond) con las fuentes actuales.
+        project = Path("18.fpga-cpu-hdmi-bl8")
+        uploaded = {"prototype": project.name, "bitstream_sha256": "a" * 64, "bitstream_size": 3}
+        patches = self._stale_apio(uploaded, project / "reports" / "x-diamond", True)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            self.assertIsNone(board._sources_changed(project))
+
+    def test_bitstream_archivado_con_fuentes_distintas_sigue_siendo_cambiado(self):
+        project = Path("18.fpga-cpu-hdmi-bl8")
+        uploaded = {"prototype": project.name, "bitstream_sha256": "a" * 64}
+        for match in (False, None):
+            patches = self._stale_apio(uploaded, project / "reports" / "x", match)
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                self.assertIsNotNone(board._sources_changed(project))
+
+    def test_subida_de_otro_prototipo_no_vale(self):
+        project = Path("18.fpga-cpu-hdmi-bl8")
+        uploaded = {"prototype": "42.fpga-cpu-hdmi-audio", "bitstream_sha256": "a" * 64}
+        patches = self._stale_apio(uploaded, project / "reports" / "x", True)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            self.assertIsNotNone(board._sources_changed(project))
 
 
 class FreshBitstreamTest(unittest.TestCase):

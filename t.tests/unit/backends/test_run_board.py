@@ -489,6 +489,60 @@ class MainTestTest(unittest.TestCase):
         self.assertIn("-y", command)
         self.assertIn("cases-cpu/basics", command)
 
+    def _capability(self):
+        return {"monitor_version": (1, 15), "version_name": "alu", "backend": "cpu",
+                "capabilities": ("mul_div",)}
+
+    def test_bitstream_programs_that_one_and_never_lets_run_tests_upload(self):
+        with mock.patch.object(run_board, "_capabilities", return_value=self._capability()), \
+             mock.patch.object(run_board, "upload_archived", return_value=0) as archived, \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            run.return_value = SimpleNamespace(returncode=0)
+            code = run_board.main_test([
+                "--prototype", "21", "--port", "COM3", "--bitstream", "reports/x",
+                "-y", "cases-cpu/basics",
+            ])
+        self.assertEqual(code, 0)
+        self.assertEqual(archived.call_args.args[3], "reports/x")
+        self.assertTrue(archived.call_args.args[4].assume_yes)
+        command = run.call_args.args[0]
+        self.assertIn("--no-upload", command)
+        self.assertNotIn("-y", command)
+        self.assertNotIn("--bitstream", command)
+
+    def test_failed_archived_upload_stops_before_the_suite(self):
+        with mock.patch.object(run_board, "_capabilities", return_value=self._capability()), \
+             mock.patch.object(run_board, "upload_archived", return_value=1), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            code = run_board.main_test(["--prototype", "21", "--port", "COM3", "--bitstream", "reports/x"])
+        self.assertEqual(code, 1)
+        run.assert_not_called()
+
+    def test_toolchain_picks_the_latest_matching_build(self):
+        folder = self.prototype_dir / "reports" / "20261124-000000-0-diamond"
+        with mock.patch.object(run_board, "_capabilities", return_value=self._capability()), \
+             mock.patch.object(board_record, "find_latest_build", return_value=(folder, "")) as find, \
+             mock.patch.object(run_board, "upload_archived", return_value=0) as archived, \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            run.return_value = SimpleNamespace(returncode=0)
+            run_board.main_test(["--prototype", "21", "--port", "COM3", "--toolchain", "diamond"])
+        self.assertEqual(find.call_args.args[1], "diamond")
+        self.assertEqual(archived.call_args.args[3], str(folder))
+
+    def test_toolchain_without_a_valid_build_says_why_and_runs_nothing(self):
+        with mock.patch.object(run_board, "_capabilities", return_value=self._capability()), \
+             mock.patch.object(board_record, "find_latest_build", return_value=(None, "no hay ningun build")), \
+             mock.patch.object(run_board.subprocess, "run") as run:
+            with self.assertRaises(SystemExit) as caught:
+                run_board.main_test(["--prototype", "21", "--port", "COM3", "--toolchain", "apio"])
+        self.assertIn("no hay ningun build", str(caught.exception))
+        run.assert_not_called()
+
+    def test_bitstream_and_toolchain_are_exclusive(self):
+        with self.assertRaises(SystemExit):
+            run_board.main_test(["--prototype", "21", "--port", "COM3",
+                                 "--bitstream", "x", "--toolchain", "apio"])
+
     def test_without_inferable_identity_fails_without_running_anything(self):
         with mock.patch.object(run_board, "_capabilities", return_value={}), \
              mock.patch.object(run_board.subprocess, "run") as run:

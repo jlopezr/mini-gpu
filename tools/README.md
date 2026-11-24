@@ -2282,6 +2282,31 @@ se reenvían a las dos: con casos concretos en un prototipo CPU+GPU, usa
 `--family` para no mandar un caso de CPU al backend de GPU. `test-all --family
 gpu` incluye también la GPU de la 36 y la 37.
 
+**Qué bitstream se prueba (`--bitstream`, `--toolchain`).** Sin ninguna de las dos,
+`test-board` prueba lo que haya en la placa, y si cree que está desfasado
+(`-y`) sube el de apio de `_build/default`, recompilando si hace falta. Para probar
+un build concreto, sea de apio o de Diamond:
+
+```bash
+$ test-board -p 18 --toolchain diamond -y          # el último build de Diamond vigente
+$ test-board -p 18 --toolchain apio -y             # el último de apio vigente
+$ test-board -p 18 --bitstream 18.fpga-cpu-hdmi-bl8/reports/20261124-090244-016634-diamond -y
+```
+
+`--toolchain` coge el build más nuevo de esa herramienta que dejó `hardware.bit`,
+terminó bien y tiene las fuentes sintetizables de ahora (un build con las fuentes
+cambiadas se salta, y si no queda ninguno lo dice y no toca la placa).
+`--bitstream` acepta un `hardware.bit` o su carpeta, como `board-upload`. Las dos
+son excluyentes, programan ese bitstream con `fujprog` (avisando si no cerró
+timing) y lanzan la suite con `--no-upload`, así que `run_tests` nunca recompila
+ni sube otro. El registro de la prueba (`board-tests.json`) queda en la carpeta
+de ese build, porque se asocia por el hash del `.bit`.
+
+Si el bitstream que hay en la placa es un build archivado vigente (el que subiste
+con `board-upload --bitstream`, por ejemplo), `run_tests` también lo da por bueno
+aunque el de apio de `_build/default` esté desfasado; si las fuentes han cambiado
+desde ese build, sigue avisando.
+
 ### CPI y reparto de los ciclos (`--measure`)
 
 `test-board --prototype 30 --measure medidas.md <casos>` ejecuta cada caso y

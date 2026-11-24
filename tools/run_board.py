@@ -447,10 +447,37 @@ def main_test(argv: list[str] | None = None) -> int:
                         help="no guarda el registro de la prueba (por defecto se escribe "
                              "reports/<build>/board-tests.json con el hash del bitstream, "
                              "los casos y su resultado)")
+    chosen = parser.add_mutually_exclusive_group()
+    chosen.add_argument("--bitstream", metavar="RUTA",
+                        help="programa ESTE bitstream archivado (un hardware.bit o su carpeta de "
+                             "reports/) y prueba contra el, sin recompilar con apio")
+    chosen.add_argument("--toolchain", choices=("apio", "diamond"),
+                        help="programa el ultimo build archivado de esa herramienta cuyas "
+                             "fuentes sean las actuales y prueba contra el, sin recompilar")
     args, extra = parser.parse_known_args(argv)
 
     port = args.port if args.port is not None else detect_port()
     target = resolve_target(args.prototype)
+    if args.bitstream or args.toolchain:
+        if args.toolchain:
+            from tools import board_record
+            folder, reason = board_record.find_latest_build(target.prototype_dir, args.toolchain)
+            if folder is None:
+                raise SystemExit(f"error: --toolchain {args.toolchain}: {reason}.")
+            source = str(folder)
+            print(f"--toolchain {args.toolchain}: {folder.name}")
+        else:
+            source = args.bitstream
+        yes = any(item in ("-y", "--yes") for item in extra)
+        policy = board.UploadPolicy(allowed=True, assume_yes=yes)
+        code = upload_archived(target, port, 1.0, source, policy)
+        if code != 0:
+            return code
+        # La placa ya lleva el bitstream elegido: run_tests no debe subir ninguno
+        # (y `-y` + `--no-upload` se contradicen, asi que `-y` se retira).
+        extra = [item for item in extra if item not in ("-y", "--yes")]
+        if "--no-upload" not in extra:
+            extra.append("--no-upload")
     if not target.capability:
         raise SystemExit(
             f"error: {target.prototype_dir.name} no tiene cpu.v/gpu_sm.v/"

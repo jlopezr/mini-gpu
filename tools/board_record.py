@@ -91,6 +91,50 @@ def last_upload() -> dict | None:
 
 # ---- identidad del build ---------------------------------------------------
 
+TOOLCHAINS = ("apio", "diamond")
+
+
+def build_toolchain(folder: Path) -> str | None:
+    """`diamond` si el build lo hizo Diamond, `apio` si lo hizo apio, None si no hay
+    `metadata.json` legible. Los builds de apio no guardan `tool`."""
+    try:
+        metadata = json.loads((Path(folder) / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return "diamond" if metadata.get("tool") == "diamond" else "apio"
+
+
+def find_latest_build(project: Path, toolchain: str) -> tuple[Path | None, str]:
+    """Carpeta de `reports/` del build mas nuevo de esa herramienta que sirve para
+    probar en placa, y el motivo si no hay ninguna.
+
+    Sirve el build que dejo `hardware.bit`, termino con codigo 0 y cuyas fuentes
+    son las de ahora (`sources_match` verdadero). Un build con las fuentes
+    cambiadas o no verificables se salta: probarlo daria un resultado que no vale
+    para el RTL actual."""
+    reports = Path(project) / "reports"
+    if not reports.is_dir():
+        return None, f"{Path(project).name} no tiene carpeta reports/"
+    seen = skipped_sources = 0
+    for folder in sorted((p for p in reports.iterdir() if p.is_dir()), reverse=True):
+        if not (folder / "hardware.bit").is_file() or build_toolchain(folder) != toolchain:
+            continue
+        try:
+            exit_code = json.loads((folder / "metadata.json").read_text(encoding="utf-8")).get("exit_code")
+        except (OSError, json.JSONDecodeError):
+            continue
+        if exit_code not in (0, None):
+            continue
+        seen += 1
+        if sources_match(project, folder) is True:
+            return folder, ""
+        skipped_sources += 1
+    if seen == 0:
+        return None, f"no hay ningun build de {toolchain} con hardware.bit en {reports}"
+    return None, (f"hay {seen} build(s) de {toolchain}, pero ninguno con las fuentes actuales "
+                  f"(o no se puede verificar); sintetiza de nuevo con "
+                  f"{'build-diamond' if toolchain == 'diamond' else 'build'}")
+
 def find_build(project: Path, bitstream_sha256: str, size: int | None = None) -> Path | None:
     """Carpeta de `reports/` cuyo `hardware.bit` tiene ese hash, la mas nueva."""
     reports = Path(project) / "reports"

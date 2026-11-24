@@ -48,6 +48,45 @@ class BoardRecordTest(unittest.TestCase):
         (case / "program.asm").write_text("HALT", encoding="utf-8")
         self.assertNotEqual(first, board_record.folder_sha256(case))
 
+    def _build(self, name, tool=None, exit_code=0, bit=True):
+        folder = self.project / "reports" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        metadata = {"exit_code": exit_code}
+        if tool:
+            metadata["tool"] = tool
+        (folder / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+        if bit:
+            (folder / "hardware.bit").write_bytes(name.encode())
+        return folder
+
+    def test_latest_build_is_per_toolchain_and_newest_first(self):
+        old = self._build("20261001-d1-diamond", "diamond")
+        new = self._build("20261002-d2-diamond", "diamond")
+        apio = self._build("20261003-a1-build")
+        with patch.object(board_record, "sources_match", return_value=True):
+            self.assertEqual(board_record.find_latest_build(self.project, "diamond")[0], new)
+            self.assertEqual(board_record.find_latest_build(self.project, "apio")[0], apio)
+        self.assertNotEqual(old, new)
+
+    def test_latest_build_skips_failed_builds_and_stale_sources(self):
+        good = self._build("20261001-ok-diamond", "diamond")
+        self._build("20261002-failed-diamond", "diamond", exit_code=1)
+        self._build("20261003-nobit-diamond", "diamond", bit=False)
+        stale = self._build("20261004-stale-diamond", "diamond")
+        with patch.object(board_record, "sources_match",
+                          side_effect=lambda project, folder: folder != stale):
+            self.assertEqual(board_record.find_latest_build(self.project, "diamond")[0], good)
+
+    def test_latest_build_explains_why_there_is_none(self):
+        self._build("20261001-a-diamond", "diamond")
+        with patch.object(board_record, "sources_match", return_value=False):
+            folder, reason = board_record.find_latest_build(self.project, "diamond")
+        self.assertIsNone(folder)
+        self.assertIn("ninguno con las fuentes actuales", reason)
+        folder, reason = board_record.find_latest_build(self.project, "apio")
+        self.assertIsNone(folder)
+        self.assertIn("ningun build de apio", reason)
+
     def test_record_is_attached_to_the_build_with_that_bitstream(self):
         board_record.record_upload(self.project, self.project / "reports" / "build-b" / "hardware.bit")
         record = self.record([result(), result("fail")])
