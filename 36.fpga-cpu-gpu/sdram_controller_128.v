@@ -345,13 +345,18 @@ module sdram_controller_128 #(
     reg [15:0] refresh_count;
     reg        refresh_due;
 
-    reg [3:0]  cmd_q;
-    reg [12:0] a_q;
-    reg [1:0]  ba_q;
-    reg [1:0]  dqm_q;
+    // `syn_useioff`: estos registros van en la celda de IO del pin. Diamond ya
+    // lo hacia solo; Yosys copia el atributo al TRELLIS_FF y nextpnr lo
+    // empaqueta en IOLOGIC (o da error si no puede). Sin el, con Yosys
+    // quedaban en el tejido y la fase buena de la SDRAM cambiaba con cada
+    // colocacion. `dq_oe` aun no: es un solo registro para dieciseis pines.
+    (* syn_useioff, ioff_dir = "output" *) reg [3:0]  cmd_q;
+    (* syn_useioff, ioff_dir = "output" *) reg [12:0] a_q;
+    (* syn_useioff, ioff_dir = "output" *) reg [1:0]  ba_q;
+    (* syn_useioff, ioff_dir = "output" *) reg [1:0]  dqm_q;
 
     reg        dq_oe;
-    reg [15:0] dq_out;
+    (* syn_useioff, ioff_dir = "output" *) reg [15:0] dq_out;
 
     // Etapa PREVIA a los pines. Estos registros llevan la logica (reset,
     // habilitaciones, decision de comando) y se quedan en el tejido; los
@@ -434,7 +439,7 @@ module sdram_controller_128 #(
     //
     // Con esto, READ_DELAY_CYCLES vuelve a ser 1: el beat 0 se captura en la
     // bajada de T+2 y se guarda en la subida de T+3.
-    reg [15:0] dq_negedge;
+    (* syn_useioff, ioff_dir = "input" *) reg [15:0] dq_negedge;
     always @(negedge clk) begin
         dq_negedge <= sdram_d;
     end
