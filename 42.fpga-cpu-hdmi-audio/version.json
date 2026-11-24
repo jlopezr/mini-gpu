@@ -1,4 +1,4 @@
 {
-  "alias": "pipelined",
+  "alias": "audio",
   "description": "Prototipo de viabilidad para una MiniCPU pipelined capaz de aceptar una instruccion por ciclo"
 }
