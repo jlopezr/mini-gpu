@@ -172,9 +172,17 @@ module text_console #(
     endcase
   end
 
-  // Dos lecturas EBR registradas: celda y, después, glifo completo.
+  // Tres etapas: celda (EBR), registro de su caracter y glifo completo (EBR).
+  // El registro `font_addr` es necesario: con la direccion de font_ram saliendo
+  // directamente de la salida registrada de text_ram, Synplify (Diamond) no la
+  // infiere como BRAM y la hace RAM distribuida (~512 DPR16X4, ~1000 slices).
+  // Para no anadir latencia (el HDMI solo recibe color y su sincronismo sale de
+  // sx/sy, asi que un ciclo mas desplazaria la imagen un pixel), `text_ram` se
+  // lee con `sx`/`sy` directamente, un ciclo antes que con `sx_aligned`.
   reg [15:0] cell_q;
   reg [127:0] glyph_q;
+  reg [7:0] font_addr;
+  reg [3:0] fg_d, bg_d;
   reg [3:0] glyph_y_q;
   reg [2:0] glyph_x_q;
   reg [3:0] glyph_y_d;
@@ -184,8 +192,7 @@ module text_console #(
   reg de_d0, hs_d0, vs_d0, de_d1, hs_d1, vs_d1;
   reg enable_sync0, enable_sync1;
   reg [11:0] sx_aligned, sy_aligned;
-  wire [11:0] cell_address = (sy_aligned[8:4] * 12'd80)
-                             + {5'd0, sx_aligned[9:3]};
+  wire [11:0] cell_address = (sy[8:4] * 12'd80) + {5'd0, sx[9:3]};
   wire [7:0] glyph_row = glyph_q[glyph_y_q * 8 +: 8];
   wire glyph_pixel = glyph_row[7 - glyph_x_q];
   wire [3:0] color_index = glyph_pixel ? fg_q : bg_q;
@@ -197,13 +204,16 @@ module text_console #(
     sx_aligned <= sx;
     sy_aligned <= sy;
     cell_q <= text_ram[cell_address];
-    glyph_q <= font_ram[cell_q[7:0]];
+    font_addr <= cell_q[7:0];
+    glyph_q <= font_ram[font_addr];
     glyph_x_d <= sx_aligned[2:0];
     glyph_y_d <= sy_aligned[3:0];
     glyph_x_q <= glyph_x_d;
     glyph_y_q <= glyph_y_d;
-    fg_q <= cell_q[11:8];
-    bg_q <= cell_q[15:12];
+    fg_d <= cell_q[11:8];
+    bg_d <= cell_q[15:12];
+    fg_q <= fg_d;
+    bg_q <= bg_d;
 
     r_d0 <= r_in; g_d0 <= g_in; b_d0 <= b_in;
     r_d1 <= r_d0; g_d1 <= g_d0; b_d1 <= b_d0;
