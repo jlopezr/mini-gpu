@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import json
 import os
 import re
 import shutil
@@ -125,6 +126,21 @@ exit 0
     return script
 
 
+def default_strategy(proto: Path) -> list[str]:
+    """Strategy1 propia del prototipo: `diamond_strategy` en su version.json."""
+    path = proto / "version.json"
+    if not path.is_file():
+        return []
+    items = json.loads(path.read_text(encoding="utf-8")).get("diamond_strategy", [])
+    return [items] if isinstance(items, str) else list(items)
+
+
+def merge_strategy(defaults: list[str], given: list[str]) -> list[str]:
+    """Los CLAVE=VALOR de la linea de comandos sustituyen a los del prototipo con la misma clave."""
+    keys = {item.split("=", 1)[0] for item in given}
+    return [d for d in defaults if d.split("=", 1)[0] not in keys] + given
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-p", "--prototype", required=True, help="numero, nombre o ruta")
@@ -151,6 +167,10 @@ def main() -> int:
     if len(lpfs) != 1:
         print(f"error: se esperaba un .lpf en {proto}, hay {len(lpfs)}")
         return 2
+
+    args.strategy = merge_strategy(default_strategy(proto), args.strategy)
+    if args.strategy:
+        print(f"Strategy: {', '.join(args.strategy)}")
 
     out = proto / ".diamond"
     if out.exists() and not args.keep:

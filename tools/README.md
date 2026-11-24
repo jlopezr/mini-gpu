@@ -2478,7 +2478,7 @@ punto cualquiera del programa sin saber a qué intercambio corresponde.
 | `mini-dis programa.bin` | Desensamblador de MiniISA (`1.isa/asm2/mini-dis.py`). Opciones: `-f/--format`, `--start-pc`, `--no-addresses`, `--no-words`. |
 | `generate-sysid [--check]` | Regenera el identificador de sistema; con `--check` solo falla si está desfasado (igual que `generate-mmio` y `generate-docs`). |
 | `build-compare [-p N ...]` | Compara el último build de apio y el de Diamond de cada prototipo, una fila por prototipo y herramienta (Fmax por reloj, recursos). `*` marca un informe hecho con fuentes distintas de las actuales. |
-| `build-diamond -p N` (solo `.ps1`) | Sintetiza un prototipo con Diamond (Synplify o LSE) y archiva el informe. `--tcl-only` genera `build.tcl` sin lanzarlo. Necesita Diamond instalado. |
+| `build-diamond -p N` (solo `.ps1`) | Sintetiza un prototipo con Diamond (Synplify o LSE) y archiva el informe. `--tcl-only` genera `build.tcl` sin lanzarlo (y borra `.diamond/`, salvo con `--keep`). `--strategy CLAVE=VALOR` fija propiedades de PAR; el prototipo puede traer las suyas en `"diamond_strategy"` de su `version.json` y `--strategy` las sustituye por clave. Necesita Diamond instalado. |
 | `check-links.py` | Comprueba que todos los enlaces relativos de los `.md` apuntan a algo que existe; devuelve 1 si hay alguno roto. Sin argumentos de `argparse`. |
 | `compare-frames.py expected actual` | Compara dos framebuffers (PPM o RGB565 de 320x240) y, si difieren, escribe un PPM con los píxeles malos en magenta. Opciones: `--rgb565`, `--tolerance`, `--diff`, `--max-listed`. |
 | `get-documents.ps1` | Lista los `.md` del repo (sin `.venv`, `y.lcc` ni `x.tests`). Solo Windows. |

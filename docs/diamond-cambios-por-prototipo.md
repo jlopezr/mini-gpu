@@ -77,6 +77,9 @@ En "Reset blando a las lanes", **·** significa que el prototipo no tiene GPU.
    `top.v`) y el bitstream sale ya con ella.
 9. **Tabla de PAR.** La misma síntesis cierra o no según la tabla de coste de PAR
    (`--strategy par_place_iterator_start_pt=K`). Un cambio mínimo de RTL puede mover el resultado por 0,1 MHz.
+   La tabla que cierra se fija en el `version.json` del prototipo: `"diamond_strategy": ["par_place_iterator_start_pt=3"]`
+   (lista de `CLAVE=VALOR`, o una cadena). `build-diamond` la aplica sin más; un `--strategy` con la misma clave la
+   sustituye. Hoy: la 21 usa la tabla 3.
 
 ## Cambios que valen para todos (en `tools/`, no en el prototipo)
 
